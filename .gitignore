@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+
+results/raw/*
+results/processed/*
+results/graphs/*
+
+*.log
+*.pcap
+
+# NS-3 build files
+build/
+.cache/
+
+# Temporary files
+*.tmp
+*.swp
