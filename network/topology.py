@@ -42,7 +42,157 @@ NUM_CLIENTS = 2
 NUM_SERVERS = 2
 
 print("Creating Wi-Fi topology...")
+# ---------------------------------------------------------
+# Traffic Priority Configuration - Member 3
+# ---------------------------------------------------------
 
+HIGH_PRIORITY = 3
+MEDIUM_PRIORITY = 2
+LOW_PRIORITY = 1
+
+# Assign priority to each client's traffic
+client_priorities = {
+    0: HIGH_PRIORITY,     # Client 1 - High priority
+    1: LOW_PRIORITY      # Client 2 - Low priority
+}
+
+print("Traffic priorities configured:")
+for client_id, priority in client_priorities.items():
+    print(f"Client {client_id + 1}: Priority {priority}")
+# ---------------------------------------------------------
+# Failure and Rerouting Configuration - Member 3
+# ---------------------------------------------------------
+
+FAILURE_TIME = 5.0
+RECOVERY_TIME = 6.0
+
+# Nodes/links that can be simulated as failed
+failed_nodes = set()
+
+# Stores the currently selected route for each client
+active_routes = {}
+
+
+
+def detect_failure(node_id):
+    """
+    Check whether a node is currently failed.
+    """
+    if node_id in failed_nodes:
+        print(f"[FAILURE DETECTED] Node {node_id} is unavailable.")
+        return True
+
+    return False
+
+def trigger_node_failure(node_id):
+    """
+    Simulate failure of a network node.
+    """
+    failed_nodes.add(node_id)
+
+    print(
+        f"[FAILURE] Node {node_id} has failed."
+    )
+
+    if detect_failure(node_id):
+        print(
+            f"[FAILURE DETECTED] Rerouting required for Node {node_id}."
+        )
+
+def recover_node(node_id):
+    """
+    Recover a previously failed network node.
+    """
+    if node_id in failed_nodes:
+        failed_nodes.remove(node_id)
+
+        print(
+            f"[RECOVERY] Node {node_id} is available again."
+        )
+    else:
+        print(
+            f"[RECOVERY] Node {node_id} was not marked as failed."
+        )
+
+
+def calculate_route_score(route_length, congestion, priority):
+    """
+    Calculate a score for an available route.
+
+    Higher score = better route.
+    """
+
+    priority_weight = priority * 10
+
+    score = priority_weight - route_length - congestion
+
+    return score        
+
+
+
+def choose_best_route(routes, priority):
+    """
+    Select the best available route based on traffic priority.
+    """
+
+    if not routes:
+        print("[REROUTING] No available routes.")
+        return None
+
+    best_route = None
+    best_score = float("-inf")
+
+    for route in routes:
+
+        score = calculate_route_score(
+            route["length"],
+            route["congestion"],
+            priority
+        )
+
+        print(
+            f"Route {route['path']} -> "
+            f"Score: {score}"
+        )
+
+        if score > best_score:
+            best_score = score
+            best_route = route
+
+    print(
+        f"[REROUTING] Selected route: "
+        f"{best_route['path']}"
+    )
+
+    return best_route
+
+def select_priority_route(routes, priority):
+    """
+    Select an alternative route based on traffic priority.
+
+    Higher-priority traffic gets the best available route.
+    """
+
+    if not routes:
+        print("[REROUTING] No alternative routes available.")
+        return None
+
+    # Routes are assumed to be ordered from best to worst.
+    if priority == HIGH_PRIORITY:
+        selected_route = routes[0]
+
+    elif priority == MEDIUM_PRIORITY:
+        selected_route = routes[min(1, len(routes) - 1)]
+
+    else:
+        selected_route = routes[-1]
+
+    print(
+        f"[REROUTING] Priority {priority} selected route: "
+        f"{selected_route}"
+    )
+
+    return selected_route
 
 # ---------------------------------------------------------
 # Create client and server nodes
@@ -179,6 +329,17 @@ server2_apps.Stop(ns3.Seconds(10.0))
 # ---------------------------------------------------------
 # UDP traffic from clients to servers
 # ---------------------------------------------------------
+# Get priority assigned to each client
+client1_priority = client_priorities[0]
+client2_priority = client_priorities[1]
+
+print(
+    f"Client 1 traffic priority: {client1_priority} (HIGH)"
+)
+
+print(
+    f"Client 2 traffic priority: {client2_priority} (LOW)"
+)
 
 # Client 1 -> Server 1
 client1 = ns3.OnOffHelper(
@@ -191,7 +352,7 @@ client1 = ns3.OnOffHelper(
 
 client1.SetAttribute(
     "DataRate",
-    ns3.StringValue("1Mbps")
+    ns3.StringValue("2Mbps" if client1_priority == HIGH_PRIORITY else "1Mbps")
 )
 
 client1.SetAttribute(
@@ -216,7 +377,7 @@ client2 = ns3.OnOffHelper(
 
 client2.SetAttribute(
     "DataRate",
-    ns3.StringValue("1Mbps")
+    ns3.StringValue("1Mbps" if client2_priority == LOW_PRIORITY else "2Mbps")
 )
 
 client2.SetAttribute(
