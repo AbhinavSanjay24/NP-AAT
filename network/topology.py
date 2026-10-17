@@ -3,8 +3,8 @@ import cppyy
 # ---------------------------------------------------------
 # NS-3 library and header paths
 # ---------------------------------------------------------
-cppyy.add_library_path("./build/lib")
-cppyy.add_include_path("./build/include")
+cppyy.add_library_path("/home/hp/ns3/ns-allinone-3.45/ns-3.45/build/lib")
+cppyy.add_include_path("/home/hp/ns3/ns-allinone-3.45/ns-3.45/build/include")
 
 # Load required NS-3 libraries
 for module in [
@@ -15,7 +15,9 @@ for module in [
     "mobility",
     "applications",
 ]:
-    cppyy.load_library(f"./build/lib/libns3.45-{module}-default.so")
+    cppyy.load_library(
+    f"/home/hp/ns3/ns-allinone-3.45/ns-3.45/build/lib/libns3.45-{module}-default.so"
+)
 
 # Load required NS-3 headers
 for module in [
