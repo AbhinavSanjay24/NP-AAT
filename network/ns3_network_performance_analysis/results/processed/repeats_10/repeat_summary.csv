@@ -1,0 +1,3 @@
+scenario,run_count,throughput_mbps_mean,throughput_mbps_sample_std,packet_loss_percent_mean,packet_loss_percent_sample_std,pdr_percent_mean,pdr_percent_sample_std,average_end_to_end_delay_ms_mean,average_end_to_end_delay_ms_sample_std
+Normal,10,3.135618,0.054713516063218004,0.8926300000000001,1.7293264154641896,99.10737,1.729326415464192,0.9476935,0.2017885736376622
+Failure,10,2.738124,0.05471656568170203,13.45623,1.7294269410864274,86.54376999999998,1.7294269410864254,17.3233171,0.551584535612015
