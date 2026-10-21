@@ -1,0 +1,5 @@
+scenario,packets_sent,packets_received,packets_lost,packet_loss_percent,pdr_percent,received_bytes,throughput_mbps,average_end_to_end_delay_ms,run_number,seed,xml_file
+Failure,5859,5122,737,12.5789,87.4211,2765880,2.76588,17.114237,31,1,failure-run-0031-seed-1.xml
+Normal,5859,5857,2,0.0341,99.9659,3162780,3.16278,0.841282,31,1,baseline-run-0031-seed-1.xml
+Failure,5859,5121,738,12.596,87.404,2765340,2.76534,17.085226,32,1,failure-run-0032-seed-1.xml
+Normal,5859,5855,4,0.0683,99.9317,3161700,3.1617,0.850101,32,1,baseline-run-0032-seed-1.xml
