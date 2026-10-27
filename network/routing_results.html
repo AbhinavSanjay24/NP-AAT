@@ -1,0 +1,477 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>A* Routing | Live Route & Results</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #162638;
+      --muted: #62758a;
+      --line: #dce5ee;
+      --paper: #ffffff;
+      --canvas: #f3f7fb;
+      --blue: #2874d0;
+      --green: #11845b;
+      --red: #c94b4b;
+      --amber: #a76b13;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--canvas);
+      color: var(--ink);
+      font: 16px/1.5 "Segoe UI", Arial, sans-serif;
+    }
+
+    header {
+      padding: 46px max(24px, calc((100% - 1120px) / 2)) 38px;
+      color: white;
+      background: linear-gradient(120deg, #10243a, #174c73 70%, #227d88);
+    }
+
+    header p { max-width: 720px; margin: 10px 0 0; color: #d7e8f4; }
+    h1 { margin: 0; font-size: clamp(2rem, 5vw, 3.2rem); line-height: 1.1; }
+    h2 { margin: 0; font-size: 1.35rem; }
+    h3 { margin: 0; font-size: 1rem; }
+    main { max-width: 1120px; margin: 28px auto 56px; padding: 0 20px; }
+    section { margin-top: 24px; }
+
+    .card {
+      padding: 24px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--paper);
+      box-shadow: 0 6px 22px rgb(23 53 79 / 5%);
+    }
+
+    .section-heading {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    .section-heading p, .subtle { margin: 4px 0 0; color: var(--muted); }
+    .eyebrow {
+      margin: 0 0 8px;
+      color: #a7d8ed;
+      font-size: .75rem;
+      font-weight: 700;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+    }
+
+    .live-tag, .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      border-radius: 999px;
+      padding: 5px 11px;
+      font-size: .8rem;
+      font-weight: 700;
+    }
+
+    .live-tag { color: #0c6849; background: #e2f5ec; white-space: nowrap; }
+    .live-tag::before { width: 8px; height: 8px; border-radius: 50%; background: currentColor; content: ""; }
+    .controls { display: flex; flex-wrap: wrap; gap: 9px; margin: 18px 0; }
+    button {
+      border: 1px solid #cbd9e6;
+      border-radius: 9px;
+      padding: 9px 13px;
+      background: white;
+      color: var(--ink);
+      font: inherit;
+      font-size: .9rem;
+      cursor: pointer;
+    }
+
+    button:hover { border-color: var(--blue); color: var(--blue); }
+    button[aria-pressed="true"] { border-color: var(--blue); background: #eaf3ff; color: #155aab; font-weight: 700; }
+    button:focus-visible { outline: 3px solid #92c5ff; outline-offset: 2px; }
+
+    .route-status {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      min-height: 43px;
+      margin: 0 0 12px;
+      font-weight: 700;
+    }
+
+    .pill { color: #125c43; background: #e3f5ec; }
+    .pill.warning { color: #8e3030; background: #fceaea; }
+    .pill.info { color: #285d91; background: #eaf3ff; }
+    .route-text { overflow-wrap: anywhere; }
+    .topology-wrap { overflow-x: auto; border: 1px solid #e6edf3; border-radius: 12px; background: #fbfdff; }
+    svg.topology { display: block; width: 100%; min-width: 590px; height: auto; }
+    .edge { stroke: #bdc9d5; stroke-width: 5; stroke-linecap: round; }
+    .route-edge { stroke: var(--green); stroke-width: 8; stroke-linecap: round; }
+    .failed-edge { stroke: var(--red); stroke-width: 6; stroke-dasharray: 11 8; }
+    .edge-label { fill: #63768a; font-size: 12px; text-anchor: middle; }
+    .node circle { fill: white; stroke: #71859a; stroke-width: 3; }
+    .node.endpoint circle { fill: #e9f2ff; stroke: var(--blue); stroke-width: 4; }
+    .node.on-route circle { fill: #e4f6ed; stroke: var(--green); stroke-width: 4; }
+    .node.failed circle { fill: #ffeded; stroke: var(--red); stroke-width: 4; }
+    .node-label { fill: var(--ink); font-size: 14px; font-weight: 700; text-anchor: middle; }
+    .node-state { fill: var(--red); font-size: 11px; font-weight: 700; text-anchor: middle; }
+    .legend { display: flex; flex-wrap: wrap; gap: 18px; margin-top: 12px; color: var(--muted); font-size: .84rem; }
+    .legend span { display: inline-flex; align-items: center; gap: 7px; }
+    .swatch { display: inline-block; width: 22px; height: 4px; border-radius: 2px; background: var(--green); }
+    .swatch.idle { background: #bdc9d5; }
+    .swatch.failed { height: 0; border-top: 3px dashed var(--red); background: transparent; }
+
+    .how-grid, .metrics-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+    .how-item { padding: 17px; border-radius: 12px; background: #f4f8fc; }
+    .how-item .number { color: var(--blue); font-size: .78rem; font-weight: 800; letter-spacing: .1em; }
+    .how-item h3 { margin: 5px 0; }
+    .how-item p { margin: 0; color: var(--muted); font-size: .9rem; }
+
+    .metrics-grid { grid-template-columns: repeat(2, 1fr); }
+    .metric-card { padding: 19px; border: 1px solid var(--line); border-radius: 12px; }
+    .metric-card p { margin: 3px 0 15px; color: var(--muted); font-size: .83rem; }
+    .bar-row { display: grid; grid-template-columns: 76px 1fr; align-items: center; gap: 10px; margin: 10px 0; }
+    .bar-label { font-size: .84rem; font-weight: 650; }
+    .bar-track { position: relative; height: 17px; border-radius: 5px; background: #edf2f7; }
+    .bar-fill { height: 100%; min-width: 2px; border-radius: 5px; background: var(--blue); }
+    .bar-fill.failure { background: #ed8a43; }
+    .error-range {
+      position: absolute;
+      top: 50%;
+      height: 3px;
+      transform: translateY(-50%);
+      background: #203348;
+    }
+    .error-range::before, .error-range::after {
+      position: absolute;
+      top: -4px;
+      width: 2px;
+      height: 11px;
+      background: #203348;
+      content: "";
+    }
+    .error-range::before { left: 0; }
+    .error-range::after { right: 0; }
+    .bar-value { display: block; margin: 3px 0 0 86px; color: var(--muted); font-size: .8rem; }
+    .metric-legend { display: flex; flex-wrap: wrap; gap: 17px; margin-top: 16px; color: var(--muted); font-size: .82rem; }
+    .metric-legend i { display: inline-block; width: 10px; height: 10px; margin-right: 5px; border-radius: 3px; background: var(--blue); }
+    .metric-legend .orange { background: #ed8a43; }
+    .callout {
+      margin-top: 16px;
+      border-left: 4px solid var(--amber);
+      border-radius: 8px;
+      padding: 13px 15px;
+      background: #fff7e8;
+      color: #654d27;
+      font-size: .9rem;
+    }
+
+    .takeaway { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+    .takeaway div { padding: 15px; border-radius: 11px; background: #f4f8fc; }
+    .takeaway strong { display: block; margin-bottom: 4px; }
+    .takeaway span { color: var(--muted); font-size: .88rem; }
+    footer { padding: 20px; color: var(--muted); text-align: center; font-size: .82rem; }
+
+    @media (max-width: 740px) {
+      header { padding: 34px 22px; }
+      .card { padding: 18px; }
+      .how-grid, .metrics-grid, .takeaway { grid-template-columns: 1fr; }
+      .section-heading { align-items: start; flex-direction: column; }
+    }
+
+    @media print {
+      body { background: white; }
+      header { padding: 22px; print-color-adjust: exact; }
+      main { margin-top: 12px; }
+      .card { box-shadow: none; break-inside: avoid; }
+      .controls { display: none; }
+      button { display: none; }
+      .topology-wrap { overflow: visible; }
+      svg.topology { min-width: 0; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <p class="eyebrow">Network routing demonstration</p>
+    <h1>A* finds a route.<br>Rerouting keeps it moving.</h1>
+    <p>Explore how a registered path changes when a link or relay fails, then compare the separate 10-run network experiment.</p>
+  </header>
+
+  <main>
+    <section class="card" aria-labelledby="route-title">
+      <div class="section-heading">
+        <div>
+          <h2 id="route-title">1. Route changes, step by step</h2>
+          <p>Choose an event to see the active route recalculate.</p>
+        </div>
+        <span class="live-tag">Interactive A* demo</span>
+      </div>
+
+      <div class="controls" role="group" aria-label="Simulated network event">
+        <button type="button" data-state="normal" aria-pressed="true">Normal network</button>
+        <button type="button" data-state="link-failure" aria-pressed="false">Fail primary link</button>
+        <button type="button" data-state="recovery" aria-pressed="false">Recover link</button>
+        <button type="button" data-state="node-failure" aria-pressed="false">Fail both relay paths</button>
+      </div>
+
+      <div class="route-status" aria-live="polite">
+        <span class="pill" id="status-pill">Route active</span>
+        <span class="route-text" id="route-text"></span>
+        <span class="pill info" id="cost-pill"></span>
+      </div>
+
+      <div class="topology-wrap">
+        <svg class="topology" viewBox="0 0 700 330" role="img" aria-labelledby="topology-title topology-desc">
+          <title id="topology-title">Network topology with a primary and backup path</title>
+          <desc id="topology-desc">Client1 connects to Server1 through either RelayA and RelayB, or RelayC and RelayD.</desc>
+          <g aria-hidden="true">
+            <line class="edge" data-edge="Client1|RelayA" x1="95" y1="165" x2="235" y2="95"/>
+            <line class="edge" data-edge="RelayA|RelayB" x1="265" y1="95" x2="420" y2="95"/>
+            <line class="edge" data-edge="RelayB|Server1" x1="450" y1="95" x2="590" y2="165"/>
+            <line class="edge" data-edge="Client1|RelayC" x1="95" y1="165" x2="235" y2="235"/>
+            <line class="edge" data-edge="RelayC|RelayD" x1="265" y1="235" x2="420" y2="235"/>
+            <line class="edge" data-edge="RelayD|Server1" x1="450" y1="235" x2="590" y2="165"/>
+
+            <text class="edge-label" x="158" y="115">1.41</text>
+            <text class="edge-label" x="343" y="80">1.00</text>
+            <text class="edge-label" x="520" y="115">1.41</text>
+            <text class="edge-label" x="158" y="221">1.41</text>
+            <text class="edge-label" x="343" y="260">1.00</text>
+            <text class="edge-label" x="520" y="221">1.41</text>
+
+            <g class="node endpoint" data-node="Client1" transform="translate(75 165)">
+              <circle r="22"/><text class="node-label" y="48">Client1</text>
+            </g>
+            <g class="node" data-node="RelayA" transform="translate(250 95)">
+              <circle r="20"/><text class="node-label" y="-32">RelayA</text><text class="node-state" y="5"></text>
+            </g>
+            <g class="node" data-node="RelayB" transform="translate(435 95)">
+              <circle r="20"/><text class="node-label" y="-32">RelayB</text><text class="node-state" y="5"></text>
+            </g>
+            <g class="node" data-node="RelayC" transform="translate(250 235)">
+              <circle r="20"/><text class="node-label" y="46">RelayC</text><text class="node-state" y="5"></text>
+            </g>
+            <g class="node" data-node="RelayD" transform="translate(435 235)">
+              <circle r="20"/><text class="node-label" y="46">RelayD</text><text class="node-state" y="5"></text>
+            </g>
+            <g class="node endpoint" data-node="Server1" transform="translate(615 165)">
+              <circle r="22"/><text class="node-label" y="48">Server1</text>
+            </g>
+          </g>
+        </svg>
+      </div>
+      <div class="legend" aria-label="Topology legend">
+        <span><i class="swatch"></i> Active A* route</span>
+        <span><i class="swatch idle"></i> Available link</span>
+        <span><i class="swatch failed"></i> Failed link</span>
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="how-title">
+      <div class="section-heading">
+        <div>
+          <h2 id="how-title">2. What the algorithm is doing</h2>
+          <p>Each route update is calculated from the remaining available links.</p>
+        </div>
+      </div>
+      <div class="how-grid">
+        <article class="how-item">
+          <span class="number">01 · SEARCH</span>
+          <h3>A* scores possible paths</h3>
+          <p>It combines the cost already traveled (g) with an estimate to the destination (h).</p>
+        </article>
+        <article class="how-item">
+          <span class="number">02 · DETECT</span>
+          <h3>Unavailable links are excluded</h3>
+          <p>A failed link or node is treated as unavailable for future route searches.</p>
+        </article>
+        <article class="how-item">
+          <span class="number">03 · SWITCH</span>
+          <h3>Registered routes refresh</h3>
+          <p>The router automatically recalculates active routes and uses the backup when possible.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="metrics-title">
+      <div class="section-heading">
+        <div>
+          <h2 id="metrics-title">3. Ten-run network experiment</h2>
+          <p>Mean results with sample standard deviation (n = 10 paired runs, seed 1).</p>
+        </div>
+        <span class="pill info">Normal vs. Wi-Fi interruption</span>
+      </div>
+
+      <div class="metrics-grid">
+        <article class="metric-card" data-metric="throughput">
+          <h3>Throughput</h3><p>Higher is better · Mbps</p>
+          <div class="bars"></div>
+        </article>
+        <article class="metric-card" data-metric="pdr">
+          <h3>Packet delivery ratio</h3><p>Higher is better · percent received</p>
+          <div class="bars"></div>
+        </article>
+        <article class="metric-card" data-metric="loss">
+          <h3>Packet loss</h3><p>Lower is better · percent lost</p>
+          <div class="bars"></div>
+        </article>
+        <article class="metric-card" data-metric="delay">
+          <h3>Average end-to-end delay</h3><p>Lower is better · milliseconds</p>
+          <div class="bars"></div>
+        </article>
+      </div>
+      <div class="metric-legend">
+        <span><i></i> Normal</span><span><i class="orange"></i> Wi-Fi interruption</span>
+        <span><b>—|—</b> ±1 sample standard deviation</span>
+      </div>
+      <div class="callout">
+        <strong>Important:</strong> These 10-run charts are from the existing NS-3 Wi-Fi sleep/resume experiment. That simulation does not use this A* router or perform alternate-route switching. Treat these metrics as a separate network experiment, not as measured A* rerouting performance.
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="takeaway-title">
+      <div class="section-heading">
+        <div>
+          <h2 id="takeaway-title">4. Key takeaways</h2>
+          <p>A concise summary to use when presenting the demonstration.</p>
+        </div>
+      </div>
+      <div class="takeaway">
+        <div><strong>Backup route selected</strong><span>When RelayA–RelayB fails, A* switches through RelayC and RelayD.</span></div>
+        <div><strong>Automatic route refresh</strong><span>Fail and recover events recalculate registered routes without another request.</span></div>
+        <div><strong>Not an NS-3 A* result</strong><span>The interactive topology demonstrates the Python router; the charts summarize a distinct NS-3 experiment.</span></div>
+      </div>
+    </section>
+  </main>
+  <footer>Interactive A* topology and repeat-analysis summary · Open this file in a browser · Print or save as PDF for a handout</footer>
+
+  <script>
+    const routeStates = {
+      normal: {
+        path: ["Client1", "RelayA", "RelayB", "Server1"],
+        cost: "3.83",
+        message: "Primary route active",
+        failedLinks: [],
+        failedNodes: []
+      },
+      "link-failure": {
+        path: ["Client1", "RelayC", "RelayD", "Server1"],
+        cost: "3.83",
+        message: "Primary link failed · backup selected",
+        failedLinks: ["RelayA|RelayB"],
+        failedNodes: []
+      },
+      recovery: {
+        path: ["Client1", "RelayA", "RelayB", "Server1"],
+        cost: "3.83",
+        message: "Link recovered · primary route restored",
+        failedLinks: [],
+        failedNodes: []
+      },
+      "node-failure": {
+        path: [],
+        cost: "No route",
+        message: "Both relay paths unavailable",
+        failedLinks: [],
+        failedNodes: ["RelayA", "RelayB", "RelayC", "RelayD"]
+      }
+    };
+
+    const measurements = {
+      throughput: {
+        unit: "Mbps",
+        digits: 3,
+        values: [{ mean: 3.135618, sd: 0.054714 }, { mean: 2.738124, sd: 0.054717 }]
+      },
+      pdr: {
+        unit: "%",
+        digits: 2,
+        values: [{ mean: 99.10737, sd: 1.729326 }, { mean: 86.54377, sd: 1.729427 }]
+      },
+      loss: {
+        unit: "%",
+        digits: 2,
+        values: [{ mean: 0.89263, sd: 1.729326 }, { mean: 13.45623, sd: 1.729427 }]
+      },
+      delay: {
+        unit: "ms",
+        digits: 2,
+        values: [{ mean: 0.9476935, sd: 0.201789 }, { mean: 17.323317, sd: 0.551585 }]
+      }
+    };
+
+    function format(value, digits) {
+      return value.toFixed(digits);
+    }
+
+    function showRoute(stateName) {
+      const state = routeStates[stateName];
+      const pathNodes = new Set(state.path);
+      const pathEdges = new Set(
+        state.path.slice(1).map((node, index) => [state.path[index], node].sort().join("|"))
+      );
+      const failedEdges = new Set(state.failedLinks.map(edge => edge.split("|").sort().join("|")));
+
+      document.querySelectorAll(".topology .edge").forEach(edge => {
+        const key = edge.dataset.edge.split("|").sort().join("|");
+        edge.setAttribute("class", "edge");
+        if (failedEdges.has(key)) edge.classList.add("failed-edge");
+        else if (pathEdges.has(key)) edge.classList.add("route-edge");
+      });
+
+      document.querySelectorAll(".topology .node").forEach(node => {
+        const name = node.dataset.node;
+        node.classList.toggle("on-route", pathNodes.has(name) && name !== "Client1" && name !== "Server1");
+        node.classList.toggle("failed", state.failedNodes.includes(name));
+        const stateLabel = node.querySelector(".node-state");
+        if (stateLabel) {
+          stateLabel.textContent = state.failedNodes.includes(name) ? "FAILED" : "";
+        }
+      });
+
+      document.getElementById("route-text").textContent =
+        state.path.length ? state.path.join("  →  ") : "No available path from Client1 to Server1";
+      document.getElementById("cost-pill").textContent =
+        state.path.length ? `Path cost ${state.cost}` : state.cost;
+      document.getElementById("status-pill").textContent = state.message;
+      document.getElementById("status-pill").className =
+        `pill ${state.path.length ? (stateName === "normal" ? "info" : "") : "warning"}`;
+      document.querySelectorAll("[data-state]").forEach(button => {
+        button.setAttribute("aria-pressed", String(button.dataset.state === stateName));
+      });
+    }
+
+    function renderMetrics() {
+      document.querySelectorAll(".metric-card").forEach(card => {
+        const metric = measurements[card.dataset.metric];
+        const max = Math.max(...metric.values.map(item => item.mean + item.sd)) * 1.08;
+        const bars = card.querySelector(".bars");
+        bars.innerHTML = metric.values.map((item, index) => {
+          const width = Math.max(item.mean / max * 100, 1);
+          const label = index === 0 ? "Normal" : "Wi-Fi fail";
+          return `<div class="bar-row">
+            <span class="bar-label">${label}</span>
+            <div class="bar-track" role="img" aria-label="${label}: ${format(item.mean, metric.digits)} ${metric.unit} mean, standard deviation ${format(item.sd, metric.digits)}">
+              <div class="bar-fill ${index ? "failure" : ""}" style="width:${width}%"></div>
+              <span class="error-range" style="left:${Math.max(0, item.mean - item.sd) / max * 100}%;width:${Math.max(0, (Math.min(item.mean + item.sd, max) - Math.max(0, item.mean - item.sd)) / max * 100)}%"></span>
+            </div>
+          </div>
+          <span class="bar-value">${format(item.mean, metric.digits)} ± ${format(item.sd, metric.digits)} ${metric.unit}</span>`;
+        }).join("");
+      });
+    }
+
+    document.querySelectorAll("[data-state]").forEach(button => {
+      button.addEventListener("click", () => showRoute(button.dataset.state));
+    });
+    showRoute("normal");
+    renderMetrics();
+  </script>
+</body>
+</html>
