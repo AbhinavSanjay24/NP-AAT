@@ -136,6 +136,15 @@ def read_simulation_events(log_path, *, require_recovery=False):
     if not route_counts:
         raise ValueError(f"{log_path} does not contain a final route-change count.")
 
+    recovery_events = read_recovery_events(log_path, require_recovery=require_recovery)
+    if recovery_events:
+        recovery_times = [event["recovery_time_seconds"] for event in recovery_events]
+        recovery_time = (
+            sum(recovery_times) / len(recovery_times)
+            if all(value is not None for value in recovery_times) else None
+        )
+        return int(route_counts[-1]), recovery_time
+
     recovery_matches = re.findall(
         r"^FAILURE_RECOVERY_TIME seconds=([^\s]+)$", text, re.MULTILINE
     )
@@ -146,6 +155,118 @@ def read_simulation_events(log_path, *, require_recovery=False):
         recovery_time = float(recovery_matches[-1])
 
     return int(route_counts[-1]), recovery_time
+
+
+def read_recovery_events(log_path, *, require_recovery=False):
+    """Read each client/server/failed-relay recovery record from a simulation log."""
+    text = log_path.read_text(encoding="utf-8")
+    pattern = (
+        r"^FAILURE_RECOVERY client=(Client[1-4]) server=(Server[1-4]) "
+        r"relay=(Relay[A-H]) seconds=([^\s]+)$"
+    )
+    matches = re.findall(pattern, text, re.MULTILINE)
+    if not matches:
+        if require_recovery and not re.search(
+            r"^FAILURE_RECOVERY_TIME seconds=[^\s]+$", text, re.MULTILINE
+        ):
+            raise ValueError(f"{log_path} does not contain a recovery-time result.")
+        return []
+
+    reroute_pattern = (
+        r"^REROUTE client=(Client[1-4]) server=(Server[1-4]) "
+        r"failed_relay=(Relay[A-H]) old=([^\s]+) new=([^\s]+) time=([^\s]+)$"
+    )
+    reroute_matches = re.findall(reroute_pattern, text, re.MULTILINE)
+    reroutes = {}
+    for client, server, relay, old_path, new_path, failure_time in reroute_matches:
+        if client in reroutes:
+            raise ValueError(f"{log_path} contains duplicate reroute records for {client}.")
+        if server != f"Server{client[6:]}":
+            raise ValueError(f"{log_path} has mismatched client/server reroute pair.")
+        if relay != f"Relay{chr(ord('A') + int(client[6:]) - 1)}":
+            raise ValueError(f"{log_path} has mismatched failed relay for {client}.")
+        if old_path == "UNREACHABLE" or new_path == "UNREACHABLE" or old_path == new_path:
+            raise ValueError(f"{log_path} contains an invalid reroute for {client}.")
+        reroutes[client] = {
+            "failed_path": old_path.replace("->", " → "),
+            "rerouted_path": new_path.replace("->", " → "),
+            "failure_time_seconds": float(failure_time),
+        }
+
+    restoration_pattern = (
+        r"^RECOVERY type=(?:node|link) client=(Client[1-4]) "
+        r"server=(Server[1-4]) relay=(Relay[A-H]) time=([^\s]+)$"
+    )
+    restoration_matches = re.findall(restoration_pattern, text, re.MULTILINE)
+    restorations = {}
+    for client, server, relay, restore_time in restoration_matches:
+        if client in restorations:
+            raise ValueError(f"{log_path} contains duplicate relay restorations for {client}.")
+        if server != f"Server{client[6:]}":
+            raise ValueError(f"{log_path} has mismatched client/server restoration pair.")
+        if relay != f"Relay{chr(ord('A') + int(client[6:]) - 1)}":
+            raise ValueError(f"{log_path} has mismatched restored relay for {client}.")
+        restorations[client] = float(restore_time)
+
+    seen_clients = set()
+    for client, server, relay, value in matches:
+        if client in seen_clients:
+            raise ValueError(f"{log_path} contains duplicate recovery records for {client}.")
+        if server != f"Server{client[6:]}":
+            raise ValueError(f"{log_path} has mismatched client/server recovery pair.")
+        if relay != f"Relay{chr(ord('A') + int(client[6:]) - 1)}":
+            raise ValueError(f"{log_path} has mismatched failed relay for {client}.")
+        seen_clients.add(client)
+
+    if require_recovery and seen_clients != {f"Client{index}" for index in range(1, 5)}:
+        raise ValueError(
+            f"{log_path} must contain recovery records for all four client/server pairs."
+        )
+    if require_recovery and set(restorations) != seen_clients:
+        raise ValueError(
+            f"{log_path} must contain relay-restoration events for all four pairs."
+        )
+
+    events = []
+    for client, server, relay, value in matches:
+        reroute = reroutes.get(client)
+        if require_recovery and reroute is None:
+            raise ValueError(f"{log_path} is missing the failed and rerouted paths for {client}.")
+        events.append({
+            "client": client,
+            "server": server,
+            "failed_relay": relay,
+            "failed_path": reroute["failed_path"] if reroute else "",
+            "rerouted_path": reroute["rerouted_path"] if reroute else "",
+            "failure_time_seconds": (
+                reroute["failure_time_seconds"] if reroute else None
+            ),
+            "relay_restored_time_seconds": restorations.get(client),
+            "recovery_time_seconds": None if value == "unrecovered" else float(value),
+            "recovered": value != "unrecovered",
+        })
+
+    if require_recovery and set(reroutes) != seen_clients:
+        raise ValueError(
+            f"{log_path} must contain failed and rerouted paths for all four pairs."
+        )
+    if require_recovery:
+        failure_times = {
+            event["failure_time_seconds"] for event in events
+        }
+        restoration_times = {
+            event["relay_restored_time_seconds"] for event in events
+        }
+        if len(failure_times) != 1:
+            raise ValueError(f"{log_path} must fail all four primary relays together.")
+        failure_time = next(iter(failure_times))
+        if len(restoration_times) != len(events) or any(
+            restore_time <= failure_time for restore_time in restoration_times
+        ):
+            raise ValueError(
+                f"{log_path} must restore each primary relay separately after failure."
+            )
+    return events
 
 
 def read_priority_flow_metrics(xml_path, scenario, run_number, seed,
@@ -215,6 +336,7 @@ def analyze_repeats(xml_dir, measurement_duration, output_dir, graph_dir,
 
     rows = []
     flow_rows = []
+    recovery_rows = []
     run_keys = {"baseline": set(), "failure": set()}
     for xml_path in sorted(xml_dir.glob("*.xml")):
         match = REPEAT_NAME.fullmatch(xml_path.name)
@@ -227,6 +349,16 @@ def analyze_repeats(xml_dir, measurement_duration, output_dir, graph_dir,
         row = read_flowmon(str(xml_path), scenario, measurement_duration)
         if log_dir is not None:
             log_path = Path(log_dir) / f"{scenario_key}-run-{run_number:04d}-seed-{seed}.txt"
+            if scenario_key == "failure":
+                recovery_rows.extend(
+                    {
+                        "scenario": scenario,
+                        "run_number": run_number,
+                        "seed": seed,
+                        **event,
+                    }
+                    for event in read_recovery_events(log_path, require_recovery=True)
+                )
             row["route_changes"], row["failure_recovery_time_seconds"] = (
                 read_simulation_events(
                     log_path, require_recovery=scenario_key == "failure"
@@ -276,11 +408,12 @@ def analyze_repeats(xml_dir, measurement_duration, output_dir, graph_dir,
     summary_path = Path(output_dir) / "repeat_summary.csv"
     flow_path = Path(output_dir) / "per_flow_metrics.csv"
     priority_path = Path(output_dir) / "priority_summary.csv"
+    recovery_path = Path(output_dir) / "per_route_recovery.csv"
     graph_dir = Path(graph_dir)
     graph_paths = [graph_dir / spec[2] for spec in REPEAT_METRICS.values()]
     output_paths = [per_run_path, summary_path, *graph_paths]
     if log_dir is not None:
-        output_paths.extend([flow_path, priority_path])
+        output_paths.extend([flow_path, priority_path, recovery_path])
         output_paths.extend(
             graph_dir / f"priority_{spec[2]}" for spec in REPEAT_METRICS.values()
         )
@@ -299,6 +432,7 @@ def analyze_repeats(xml_dir, measurement_duration, output_dir, graph_dir,
     if log_dir is not None:
         flow_df = pd.DataFrame(flow_rows)
         flow_df.to_csv(flow_path, index=False)
+        pd.DataFrame(recovery_rows).to_csv(recovery_path, index=False)
         priority_metrics = list(REPEAT_METRICS)
         priority_summary = (
             flow_df.groupby(["scenario", "priority"])[priority_metrics]
@@ -383,6 +517,7 @@ def analyze_repeats(xml_dir, measurement_duration, output_dir, graph_dir,
     if log_dir is not None:
         print(f"Saved per-flow priority CSV: {flow_path}")
         print(f"Saved priority summary CSV: {priority_path}")
+        print(f"Saved per-route recovery CSV: {recovery_path}")
     graph_count = 8 if log_dir is not None else 4
     print(f"Saved {graph_count} unit-specific mean ± SD graphs in: {graph_dir}")
 

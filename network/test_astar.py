@@ -51,8 +51,23 @@ def build_multi_client_network():
         router.add_link(primary, server, cost=1)
         router.add_link(client, backup, cost=2)
         router.add_link(backup, server, cost=2)
+        if index < 3:
+            next_primary = f"Relay{chr(ord('B') + index)}"
+            next_backup = f"Relay{chr(ord('F') + index)}"
+            router.add_link(primary, next_primary, cost=1.5)
+            router.add_link(backup, next_backup, cost=1.5)
 
     return router
+
+
+def test_all_relays_are_connected_through_the_weighted_backbone():
+    router = build_multi_client_network()
+
+    path, cost = router.find_path("RelayA", "RelayH")
+
+    assert path[0] == "RelayA"
+    assert path[-1] == "RelayH"
+    assert cost > 0
 
 
 def test_four_client_server_pairs_reroute_independently():

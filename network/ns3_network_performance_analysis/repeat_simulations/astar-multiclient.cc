@@ -29,11 +29,12 @@ constexpr uint32_t SERVER_COUNT = 4;
 constexpr uint32_t RELAY_COUNT = 8;
 constexpr uint32_t NODE_COUNT = CLIENT_COUNT + SERVER_COUNT + RELAY_COUNT;
 constexpr uint16_t FIRST_PORT = 5000;
-constexpr double SIMULATION_END = 10.0;
+constexpr double SIMULATION_END = 18.0;
 constexpr double TRAFFIC_START = 1.0;
-constexpr double TRAFFIC_STOP = 9.0;
-constexpr double FAILURE_TIME = 5.0;
-constexpr double RECOVERY_TIME = 7.0;
+constexpr double TRAFFIC_STOP = 17.0;
+constexpr double FAILURE_TIME = 4.0;
+constexpr double FIRST_RELAY_RECOVERY_TIME = 6.0;
+constexpr double RELAY_RECOVERY_INTERVAL = 2.0;
 
 enum NodeIndex : uint32_t
 {
@@ -310,6 +311,9 @@ std::string FormatPath(const Route& route)
 void CheckRecovery(Ptr<PacketSink> sink,
                    uint64_t receivedBeforeFailure,
                    double failureTime,
+                   const std::string& client,
+                   const std::string& server,
+                   const std::string& relay,
                    std::shared_ptr<bool> recovered)
 {
     if (*recovered)
@@ -319,8 +323,11 @@ void CheckRecovery(Ptr<PacketSink> sink,
     if (sink->GetTotalRx() > receivedBeforeFailure)
     {
         *recovered = true;
-        std::cout << "FAILURE_RECOVERY_TIME seconds="
-                  << Simulator::Now().GetSeconds() - failureTime << '\n';
+        std::cout << "FAILURE_RECOVERY client=" << client
+                  << " server=" << server
+                  << " relay=" << relay
+                  << " seconds=" << Simulator::Now().GetSeconds() - failureTime
+                  << '\n';
         return;
     }
     if (Simulator::Now().GetSeconds() + 0.01 < SIMULATION_END)
@@ -330,11 +337,17 @@ void CheckRecovery(Ptr<PacketSink> sink,
                             sink,
                             receivedBeforeFailure,
                             failureTime,
+                            client,
+                            server,
+                            relay,
                             recovered);
     }
     else
     {
-        std::cout << "FAILURE_RECOVERY_TIME seconds=unrecovered\n";
+        std::cout << "FAILURE_RECOVERY client=" << client
+                  << " server=" << server
+                  << " relay=" << relay
+                  << " seconds=unrecovered\n";
     }
 }
 
@@ -345,7 +358,7 @@ int main(int argc, char* argv[])
     uint64_t runNumber = 1;
     uint32_t seed = 1;
     bool failureScenario = false;
-    std::string failureType = "link";
+    std::string failureType = "node";
     std::string outputPath = "scratch/astar-multiclient.xml";
     CommandLine commandLine(__FILE__);
     commandLine.AddValue("run", "NS-3 random-variable run number", runNumber);
@@ -373,21 +386,21 @@ int main(int argc, char* argv[])
     positions.reserve(NODE_COUNT);
     for (uint32_t i = 0; i < CLIENT_COUNT; ++i)
     {
-        const double row = i * 80.0;
+        const double row = i * 20.0;
         positions.emplace_back(0, row, 0);
     }
     for (uint32_t i = 0; i < SERVER_COUNT; ++i)
     {
-        const double row = i * 80.0 + 10;
-        positions.emplace_back(40, row, 0);
+        const double row = i * 20.0;
+        positions.emplace_back(48, row, 0);
     }
     for (uint32_t i = 0; i < CLIENT_COUNT; ++i)
     {
-        positions.emplace_back(20, i * 80.0, 0);
+        positions.emplace_back(20, i * 20.0, 0);
     }
     for (uint32_t i = 0; i < CLIENT_COUNT; ++i)
     {
-        positions.emplace_back(20, i * 80.0 + 20, 0);
+        positions.emplace_back(28, i * 20.0, 0);
     }
 
     NodeContainer allNodes;
@@ -449,11 +462,16 @@ int main(int argc, char* argv[])
         const uint32_t server = SERVERS_START + i;
         const uint32_t primary = PRIMARY_RELAYS_START + i;
         const uint32_t backup = BACKUP_RELAYS_START + i;
-        graph.AddLink(client, primary, 7.0);
-        graph.AddLink(primary, server, 7.0);
-        graph.AddLink(client, backup, 0.0);
-        graph.AddLink(backup, server, 0.0);
-        graph.AddLink(primary, backup, 0.0);
+        graph.AddLink(client, primary, 0.0);
+        graph.AddLink(primary, server, 0.0);
+        graph.AddLink(client, backup, 6.0);
+        graph.AddLink(backup, server, 6.0);
+        graph.AddLink(primary, backup, 2.0);
+        if (i + 1 < CLIENT_COUNT)
+        {
+            graph.AddLink(primary, primary + 1, 3.0);
+            graph.AddLink(backup, backup + 1, 3.0);
+        }
     }
 
     const std::vector<uint32_t> priorities = {3, 2, 1, 3};
@@ -522,8 +540,8 @@ int main(int argc, char* argv[])
         }
     };
     installRoutes();
-    std::cout << "TOPOLOGY clients=4 servers=4 relays=8 links=20 failure_type="
-              << failureType << '\n';
+    std::cout << "TOPOLOGY clients=4 servers=4 relays=8 links=26 relay_mesh=ladder "
+              << "failure_schedule=staggered failure_type=" << failureType << '\n';
     std::cout << "ROUTE_CHANGE_COUNT total=0\n";
 
     std::vector<Ptr<PacketSink>> sinks;
@@ -554,64 +572,109 @@ int main(int argc, char* argv[])
 
     if (failureScenario)
     {
-        const uint32_t client = CLIENTS_START;
-        const uint32_t server = SERVERS_START;
-        const uint32_t primary = PRIMARY_RELAYS_START;
-        Ptr<Ipv4> primaryIpv4 = allNodes.Get(primary)->GetObject<Ipv4>();
-        const int32_t primaryInterface =
-            primaryIpv4->GetInterfaceForDevice(devices.Get(primary));
-        NS_ABORT_MSG_IF(primaryInterface < 0, "Wi-Fi interface missing from primary relay.");
-        Simulator::Schedule(Seconds(FAILURE_TIME), [&, primary, client, server,
-                                                    primaryIpv4, primaryInterface,
-                                                    failureType]() {
-            const std::string oldPath = FormatPath(activeRoutes[0]);
-            const uint64_t receivedBeforeFailure = sinks[0]->GetTotalRx();
-            auto recovered = std::make_shared<bool>(false);
-            if (failureType == "link")
+        Simulator::Schedule(Seconds(FAILURE_TIME), [&, failureType]() {
+            std::vector<uint64_t> receivedBeforeFailure(CLIENT_COUNT);
+            std::vector<std::string> oldPaths(CLIENT_COUNT);
+            std::vector<std::string> clientsNames(CLIENT_COUNT);
+            std::vector<std::string> serversNames(CLIENT_COUNT);
+            std::vector<std::string> relayNames(CLIENT_COUNT);
+
+            for (uint32_t pair = 0; pair < CLIENT_COUNT; ++pair)
             {
-                graph.SetLinkAvailable(client, primary, false);
-                std::cout << "FAILURE type=link link=" << NodeName(client) << "-"
-                          << NodeName(primary) << " time=" << Simulator::Now().GetSeconds()
-                          << '\n';
+                const uint32_t client = CLIENTS_START + pair;
+                const uint32_t server = SERVERS_START + pair;
+                const uint32_t primary = PRIMARY_RELAYS_START + pair;
+                Ptr<Ipv4> primaryIpv4 = allNodes.Get(primary)->GetObject<Ipv4>();
+                const int32_t primaryInterface =
+                    primaryIpv4->GetInterfaceForDevice(devices.Get(primary));
+                NS_ABORT_MSG_IF(primaryInterface < 0,
+                                "Wi-Fi interface missing from primary relay.");
+
+                oldPaths[pair] = FormatPath(activeRoutes[pair]);
+                receivedBeforeFailure[pair] = sinks[pair]->GetTotalRx();
+                clientsNames[pair] = NodeName(client);
+                serversNames[pair] = NodeName(server);
+                relayNames[pair] = NodeName(primary);
+                if (failureType == "link")
+                {
+                    graph.SetLinkAvailable(client, primary, false);
+                    std::cout << "FAILURE type=link client=" << clientsNames[pair]
+                              << " server=" << serversNames[pair]
+                              << " relay=" << relayNames[pair]
+                              << " link=" << clientsNames[pair] << "-"
+                              << relayNames[pair]
+                              << " time=" << Simulator::Now().GetSeconds() << '\n';
+                }
+                else
+                {
+                    graph.SetNodeAvailable(primary, false);
+                    primaryIpv4->SetDown(static_cast<uint32_t>(primaryInterface));
+                    std::cout << "FAILURE type=node client=" << clientsNames[pair]
+                              << " server=" << serversNames[pair]
+                              << " relay=" << relayNames[pair]
+                              << " time=" << Simulator::Now().GetSeconds() << '\n';
+                }
             }
-            else
-            {
-                graph.SetNodeAvailable(primary, false);
-                primaryIpv4->SetDown(primaryInterface);
-                std::cout << "FAILURE type=node node=" << NodeName(primary)
-                          << " time=" << Simulator::Now().GetSeconds() << '\n';
-            }
+
             installRoutes();
-            std::cout << "REROUTE client=" << NodeName(client)
-                      << " server=" << NodeName(server)
-                      << " old=" << oldPath
-                      << " new=" << FormatPath(activeRoutes[0])
-                      << " time=" << Simulator::Now().GetSeconds() << '\n';
-            Simulator::Schedule(MilliSeconds(10),
-                                &CheckRecovery,
-                                sinks[0],
-                                receivedBeforeFailure,
-                                FAILURE_TIME,
-                                recovered);
+            for (uint32_t pair = 0; pair < CLIENT_COUNT; ++pair)
+            {
+                std::cout << "REROUTE client=" << clientsNames[pair]
+                          << " server=" << serversNames[pair]
+                          << " failed_relay=" << relayNames[pair]
+                          << " old=" << oldPaths[pair]
+                          << " new=" << FormatPath(activeRoutes[pair])
+                          << " time=" << Simulator::Now().GetSeconds() << '\n';
+                auto recovered = std::make_shared<bool>(false);
+                Simulator::Schedule(MilliSeconds(10),
+                                    &CheckRecovery,
+                                    sinks[pair],
+                                    receivedBeforeFailure[pair],
+                                    FAILURE_TIME,
+                                    clientsNames[pair],
+                                    serversNames[pair],
+                                    relayNames[pair],
+                                    recovered);
+            }
         });
 
-        Simulator::Schedule(Seconds(RECOVERY_TIME), [&, primary, primaryIpv4,
-                                                     primaryInterface, failureType]() {
-            if (failureType == "link")
-            {
-                graph.SetLinkAvailable(CLIENTS_START, primary, true);
-                std::cout << "RECOVERY type=link link=Client1-RelayA time="
-                          << Simulator::Now().GetSeconds() << '\n';
-            }
-            else
-            {
-                graph.SetNodeAvailable(primary, true);
-                primaryIpv4->SetUp(primaryInterface);
-                std::cout << "RECOVERY type=node node=RelayA time="
-                          << Simulator::Now().GetSeconds() << '\n';
-            }
-            installRoutes();
-        });
+        for (uint32_t pair = 0; pair < CLIENT_COUNT; ++pair)
+        {
+            const uint32_t client = CLIENTS_START + pair;
+            const uint32_t server = SERVERS_START + pair;
+            const uint32_t primary = PRIMARY_RELAYS_START + pair;
+            Ptr<Ipv4> primaryIpv4 = allNodes.Get(primary)->GetObject<Ipv4>();
+            const int32_t primaryInterface =
+                primaryIpv4->GetInterfaceForDevice(devices.Get(primary));
+            NS_ABORT_MSG_IF(primaryInterface < 0,
+                            "Wi-Fi interface missing from primary relay.");
+            const std::string clientName = NodeName(client);
+            const std::string serverName = NodeName(server);
+            const std::string relayName = NodeName(primary);
+            const double recoveryTime =
+                FIRST_RELAY_RECOVERY_TIME + pair * RELAY_RECOVERY_INTERVAL;
+
+            Simulator::Schedule(Seconds(recoveryTime),
+                                [&, client, primary, primaryIpv4,
+                                 primaryInterface, clientName, serverName, relayName,
+                                 failureType]() {
+                if (failureType == "link")
+                {
+                    graph.SetLinkAvailable(client, primary, true);
+                }
+                else
+                {
+                    graph.SetNodeAvailable(primary, true);
+                    primaryIpv4->SetUp(static_cast<uint32_t>(primaryInterface));
+                }
+                std::cout << "RECOVERY type=" << failureType
+                          << " client=" << clientName
+                          << " server=" << serverName
+                          << " relay=" << relayName
+                          << " time=" << Simulator::Now().GetSeconds() << '\n';
+                installRoutes();
+            });
+        }
     }
 
     FlowMonitorHelper flowHelper;
@@ -624,7 +687,12 @@ int main(int argc, char* argv[])
     monitor->CheckForLostPackets();
     monitor->SerializeToXmlFile(outputPath, true, true);
     std::cout << "ROUTE_CHANGE_COUNT total=" << routeChangeCount << '\n';
-    std::cout << "CLIENT_RX client=Client1 bytes=" << sinks[0]->GetTotalRx() << '\n';
+    for (uint32_t pair = 0; pair < CLIENT_COUNT; ++pair)
+    {
+        std::cout << "CLIENT_RX client=" << NodeName(CLIENTS_START + pair)
+                  << " server=" << NodeName(SERVERS_START + pair)
+                  << " bytes=" << sinks[pair]->GetTotalRx() << '\n';
+    }
     std::cout << "FlowMonitor results saved to " << outputPath << '\n';
     Simulator::Destroy();
     return 0;

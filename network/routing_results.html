@@ -110,10 +110,11 @@
     .route-text { overflow-wrap: anywhere; }
     .topology-wrap { overflow-x: auto; border: 1px solid #e6edf3; border-radius: 12px; background: #fbfdff; }
     svg.topology { display: block; width: 100%; min-width: 590px; height: auto; }
-    .edge { stroke: #bdc9d5; stroke-width: 5; stroke-linecap: round; }
-    .route-edge { stroke: var(--green); stroke-width: 8; stroke-linecap: round; }
-    .failed-edge { stroke: var(--red); stroke-width: 6; stroke-dasharray: 11 8; }
-    .edge-label { fill: #63768a; font-size: 12px; text-anchor: middle; }
+    .edge { fill: none; stroke: #c4cfda; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+    .route-edge { stroke: var(--green); stroke-width: 7; stroke-linecap: round; }
+    .failed-edge { stroke: var(--red); stroke-width: 5; stroke-dasharray: 10 7; }
+    .edge-weight-background { fill: #ffffff; fill-opacity: .96; stroke: #95a7b8; stroke-width: 1; }
+    .edge-label { fill: #263b50; font-size: 11px; font-weight: 700; text-anchor: middle; }
     .node circle { fill: white; stroke: #71859a; stroke-width: 3; }
     .node.endpoint circle { fill: #e9f2ff; stroke: var(--blue); stroke-width: 4; }
     .node.on-route circle { fill: #e4f6ed; stroke: var(--green); stroke-width: 4; }
@@ -128,6 +129,10 @@
     .route-card span { display: block; color: var(--muted); font-size: .8rem; overflow-wrap: anywhere; }
     .route-card.rerouted { border-color: #e2bd77; background: #fffaf0; }
     .route-card.unavailable { border-color: #efb6b6; background: #fff4f4; }
+    .route-card.recovered { border-color: #a7d8c0; background: #f2fbf6; }
+    .event-log { display: grid; gap: 6px; margin-top: 12px; }
+    .event-log:empty { display: none; }
+    .event-log-entry { padding: 8px 11px; border-left: 3px solid var(--blue); border-radius: 6px; background: #f4f8fc; color: var(--muted); font-size: .82rem; }
     .legend { display: flex; flex-wrap: wrap; gap: 18px; margin-top: 12px; color: var(--muted); font-size: .84rem; }
     .legend span { display: inline-flex; align-items: center; gap: 7px; }
     .swatch { display: inline-block; width: 22px; height: 4px; border-radius: 2px; background: var(--green); }
@@ -217,15 +222,15 @@
       <div class="section-heading">
         <div>
           <h2 id="route-title">1. Route changes, step by step</h2>
-          <p>Four clients connect to four servers through eight relays. Each client has a traffic priority; simulate a failure and watch A* recalculate every active route.</p>
+          <p>Four client/server pairs share an interconnected eight-relay mesh. Fail all four primary relays together to see every client reroute, then watch each relay recover separately.</p>
         </div>
         <span class="live-tag">Interactive A* demo</span>
       </div>
 
       <div class="controls" role="group" aria-label="Simulated network event">
         <button type="button" data-state="normal" aria-pressed="true">Normal network</button>
-        <button type="button" data-state="link-failure" aria-pressed="false">Fail Client1 primary link</button>
-        <button type="button" data-state="recovery" aria-pressed="false">Recover Client1 link</button>
+        <button type="button" data-state="sequence" aria-pressed="false">Fail all 4 primary relays &amp; recover</button>
+        <button type="button" data-state="link-failure" aria-pressed="false">Demo Client1 link reroute</button>
         <button type="button" data-state="node-failure" aria-pressed="false">Fail both Client1 paths</button>
       </div>
 
@@ -235,18 +240,20 @@
       </div>
 
       <div class="topology-wrap">
-        <svg class="topology" viewBox="0 0 1000 550" role="img" aria-labelledby="topology-title topology-desc">
+        <svg class="topology" viewBox="0 0 1000 700" role="img" aria-labelledby="topology-title topology-desc">
           <title id="topology-title">Four clients, four servers, and eight relays</title>
-          <desc id="topology-desc">Four client-server pairs are connected through primary and backup relay nodes. A* recalculates active routes after a failure.</desc>
+          <desc id="topology-desc">Four client-server pairs connect through a clean, interconnected eight-relay ladder. Curved access links and separated weight labels make each A-star link cost easy to read.</desc>
           <g id="topology-edges" aria-hidden="true"></g>
           <g id="topology-nodes" aria-hidden="true"></g>
         </svg>
       </div>
       <div class="route-list" id="route-list" aria-live="polite"></div>
+      <div class="event-log" id="failure-event-log" aria-live="polite" aria-label="Client-specific failure and recovery events"></div>
       <div class="legend" aria-label="Topology legend">
         <span><i class="swatch"></i> Active A* route</span>
         <span><i class="swatch idle"></i> Available link</span>
         <span><i class="swatch failed"></i> Failed link</span>
+        <span><b>w = edge weight</b> · Route cost is the sum of its edge weights</span>
       </div>
     </section>
 
@@ -320,8 +327,8 @@
         </div>
       </div>
       <div class="takeaway">
-        <div><strong>Backup route selected</strong><span>When Client1's primary link fails, A* switches through RelayE while the other routes remain active.</span></div>
-        <div><strong>Automatic route refresh</strong><span>Fail and recover events recalculate registered routes without another request.</span></div>
+        <div><strong>Every pair fails together</strong><span>RelayA, RelayB, RelayC, and RelayD go offline simultaneously so all four clients reroute at once.</span></div>
+        <div><strong>Unique recovery per pair</strong><span>Each event names its client, server, failed path, alternate path, and that pair's individually timed relay restoration.</span></div>
         <div><strong>Keep experiment results separate</strong><span>The comparison charts show the earlier interruption experiment; the NS-3 A* scenario produces its own measurements.</span></div>
       </div>
     </section>
@@ -337,6 +344,12 @@
     const failedLinks = new Set();
     const failedNodes = new Set();
     const activeRoutes = new Map();
+    const sequenceTimers = [];
+    const routeEventStates = ["ready", "ready", "ready", "ready"];
+    const routeTransitions = [null, null, null, null];
+    const routeEventLog = [];
+    let sequenceId = 0;
+    let sequenceStartedAt = 0;
     const priorityLabels = {
       Client1: "HIGH · 2 Mbps",
       Client2: "MEDIUM · 1 Mbps",
@@ -350,27 +363,75 @@
       adjacency.set(name, []);
     }
 
-    function addEdge(from, to, cost) {
-      const edge = { from, to, cost, key: [from, to].sort().join("|") };
+    function addEdge(from, to, cost, options = {}) {
+      const edge = { from, to, cost, ...options, key: [from, to].sort().join("|") };
       edges.push(edge);
       adjacency.get(from).push({ node: to, cost, key: edge.key });
       adjacency.get(to).push({ node: from, cost, key: edge.key });
     }
 
-    const rowY = [90, 210, 330, 450];
+    const rowY = [125, 285, 445, 605];
     for (let index = 0; index < 4; index += 1) {
       const row = index + 1;
       const primary = `Relay${String.fromCharCode(65 + index)}`;
       const backup = `Relay${String.fromCharCode(69 + index)}`;
       addNode(`Client${row}`, "client", 95, rowY[index]);
-      addNode(primary, "relay", 365, rowY[index]);
-      addNode(backup, "relay", 635, rowY[index] + 40);
+      addNode(primary, "relay", 365, rowY[index] - 28);
+      addNode(backup, "relay", 635, rowY[index] + 28);
       addNode(`Server${row}`, "server", 905, rowY[index]);
       addEdge(`Client${row}`, primary, 1);
-      addEdge(primary, `Server${row}`, 1);
-      addEdge(`Client${row}`, backup, 2);
+      addEdge(primary, `Server${row}`, 1, { curve: "above" });
+      addEdge(`Client${row}`, backup, 2, { curve: "below" });
       addEdge(backup, `Server${row}`, 2);
       addEdge(primary, backup, 0.75);
+    }
+
+    for (let index = 0; index < 3; index += 1) {
+      const primary = `Relay${String.fromCharCode(65 + index)}`;
+      const nextPrimary = `Relay${String.fromCharCode(66 + index)}`;
+      const backup = `Relay${String.fromCharCode(69 + index)}`;
+      const nextBackup = `Relay${String.fromCharCode(70 + index)}`;
+      addEdge(primary, nextPrimary, 1.5);
+      addEdge(backup, nextBackup, 1.5);
+    }
+
+    function edgeGeometry(edge, from, to) {
+      if (edge.curve) {
+        const direction = edge.curve === "above" ? -1 : 1;
+        const bend = direction * 52;
+        const firstControl = { x: from.x + (to.x - from.x) * 0.34, y: from.y + bend };
+        const secondControl = { x: from.x + (to.x - from.x) * 0.68, y: to.y + bend };
+        return {
+          path: `M ${from.x} ${from.y} C ${firstControl.x} ${firstControl.y}, ${secondControl.x} ${secondControl.y}, ${to.x} ${to.y}`,
+          pointAt(t) {
+            const inverse = 1 - t;
+            const x = inverse ** 3 * from.x
+              + 3 * inverse ** 2 * t * firstControl.x
+              + 3 * inverse * t ** 2 * secondControl.x
+              + t ** 3 * to.x;
+            const y = inverse ** 3 * from.y
+              + 3 * inverse ** 2 * t * firstControl.y
+              + 3 * inverse * t ** 2 * secondControl.y
+              + t ** 3 * to.y;
+            const dx = 3 * inverse ** 2 * (firstControl.x - from.x)
+              + 6 * inverse * t * (secondControl.x - firstControl.x)
+              + 3 * t ** 2 * (to.x - secondControl.x);
+            const dy = 3 * inverse ** 2 * (firstControl.y - from.y)
+              + 6 * inverse * t * (secondControl.y - firstControl.y)
+              + 3 * t ** 2 * (to.y - secondControl.y);
+            return { x, y, dx, dy };
+          }
+        };
+      }
+
+      const dx = to.x - from.x;
+      const dy = to.y - from.y;
+      return {
+        path: `M ${from.x} ${from.y} L ${to.x} ${to.y}`,
+        pointAt(t) {
+          return { x: from.x + dx * t, y: from.y + dy * t, dx, dy };
+        }
+      };
     }
 
     function makeSvgElement(tag, attributes = {}) {
@@ -379,9 +440,65 @@
       return element;
     }
 
+    function overlapArea(first, second) {
+      const width = Math.max(0, Math.min(first.right, second.right) - Math.max(first.left, second.left));
+      const height = Math.max(0, Math.min(first.bottom, second.bottom) - Math.max(first.top, second.top));
+      return width * height;
+    }
+
+    function placeWeightLabel(edge, geometry, occupied) {
+      const width = 50;
+      const height = 20;
+      let best = null;
+      for (const t of [0.3, 0.42, 0.5, 0.58, 0.7]) {
+        const point = geometry.pointAt(t);
+        const length = Math.hypot(point.dx, point.dy) || 1;
+        const normalX = -point.dy / length;
+        const normalY = point.dx / length;
+        for (const offset of [-54, 54, -38, 38, -24, 24, 0]) {
+          const x = point.x + normalX * offset;
+          const y = point.y + normalY * offset;
+          const bounds = {
+            left: x - width / 2,
+            right: x + width / 2,
+            top: y - height / 2,
+            bottom: y + height / 2
+          };
+          const outside = Math.max(0, 34 - bounds.left)
+            + Math.max(0, bounds.right - 966)
+            + Math.max(0, 54 - bounds.top)
+            + Math.max(0, bounds.bottom - 680);
+          const collisionArea = occupied.reduce(
+            (total, obstacle) => total + overlapArea(bounds, obstacle),
+            0
+          );
+          const score = collisionArea * 1000 + outside * 1000
+            + Math.abs(offset) + Math.abs(t - 0.5) * 10;
+          if (!best || score < best.score) best = { x, y, bounds, score };
+        }
+      }
+      occupied.push(best.bounds);
+      return best;
+    }
+
     function renderTopology() {
       const edgeLayer = document.getElementById("topology-edges");
       const nodeLayer = document.getElementById("topology-nodes");
+      const occupied = [
+        { left: 15, right: 175, top: 20, bottom: 52 },
+        { left: 285, right: 445, top: 20, bottom: 52 },
+        { left: 555, right: 715, top: 20, bottom: 52 },
+        { left: 825, right: 985, top: 20, bottom: 52 },
+        ...nodes.map(node => {
+          const endpoint = node.type === "client" || node.type === "server";
+          return {
+            left: node.x - (endpoint ? 55 : 42),
+            right: node.x + (endpoint ? 55 : 42),
+            top: node.y - (endpoint ? 30 : 50),
+            bottom: node.y + (endpoint ? 68 : 28)
+          };
+        })
+      ];
       [
         ["Clients", 95],
         ["Primary relays", 365],
@@ -396,10 +513,26 @@
       edges.forEach(edge => {
         const from = positions.get(edge.from);
         const to = positions.get(edge.to);
-        edgeLayer.appendChild(makeSvgElement("line", {
-          x1: from.x, y1: from.y, x2: to.x, y2: to.y,
+        const geometry = edgeGeometry(edge, from, to);
+        edgeLayer.appendChild(makeSvgElement("path", {
+          d: geometry.path,
           class: "edge", "data-edge": edge.key
         }));
+        const { x: labelX, y: labelY } = placeWeightLabel(edge, geometry, occupied);
+        const label = makeSvgElement("g", {
+          class: "edge-weight",
+          "aria-label": `Link weight ${edge.cost.toFixed(2)}: ${edge.from} to ${edge.to}`
+        });
+        label.appendChild(makeSvgElement("rect", {
+          x: labelX - 25, y: labelY - 10, width: 50, height: 20, rx: 6,
+          class: "edge-weight-background"
+        }));
+        const weight = makeSvgElement("text", {
+          x: labelX, y: labelY + 3.5, class: "edge-label"
+        });
+        weight.textContent = `w=${edge.cost.toFixed(2)}`;
+        label.appendChild(weight);
+        edgeLayer.appendChild(label);
       });
 
       nodes.forEach(node => {
@@ -519,13 +652,93 @@
       return value.toFixed(digits);
     }
 
-    function showRoute(stateName) {
+    function clearSequence() {
+      sequenceId += 1;
+      sequenceTimers.splice(0).forEach(timer => clearTimeout(timer));
+    }
+
+    function renderFailureEventLog() {
+      const log = document.getElementById("failure-event-log");
+      log.replaceChildren(...routeEventLog.map(event => {
+        const entry = document.createElement("div");
+        entry.className = "event-log-entry";
+        entry.textContent = event;
+        return entry;
+      }));
+    }
+
+    function schedulePairFailureSequence() {
+      clearSequence();
+      const currentSequence = sequenceId;
       failedLinks.clear();
       failedNodes.clear();
-      if (stateName === "link-failure") failedLinks.add("Client1|RelayA");
-      if (stateName === "node-failure") {
-        failedLinks.add("Client1|RelayA");
-        failedLinks.add("Client1|RelayE");
+      routeEventLog.splice(0);
+      routeEventStates.fill("ready");
+      routeTransitions.fill(null);
+      sequenceStartedAt = performance.now();
+      showRoute("sequence");
+
+      const failures = [...activeRoutes].map(([client, route], index) => ({
+        index,
+        client,
+        server: `Server${index + 1}`,
+        relay: `Relay${String.fromCharCode(65 + index)}`,
+        failedPath: route.path.join(" → ")
+      }));
+      failures.forEach(({ relay, index }) => {
+        failedNodes.add(relay);
+        routeEventStates[index] = "failed";
+      });
+      showRoute("sequence");
+
+      failures.forEach(({ index, client, server, relay, failedPath }) => {
+        const route = activeRoutes.get(client);
+        const alternate = route.path.filter(name => /^Relay/.test(name)).join(" → ");
+        routeTransitions[index] = {
+          failedPath,
+          reroutedPath: route.path.join(" → ")
+        };
+        routeEventLog.push(
+          `0.0s · FAILURE · ${client} → ${server}: ${relay} offline; failed path ${failedPath}; rerouted path ${routeTransitions[index].reroutedPath || "no available route"}${alternate ? ` via ${alternate}` : ""}`
+        );
+      });
+      showRoute("sequence");
+      renderFailureEventLog();
+
+      failures.forEach(({ index, client, server, relay }) => {
+        sequenceTimers.push(setTimeout(() => {
+          if (currentSequence !== sequenceId) return;
+          failedNodes.delete(relay);
+          routeEventStates[index] = "recovered";
+          showRoute("sequence");
+          const route = activeRoutes.get(client);
+          const restoredPath = route.path.filter(name => /^Relay/.test(name)).join(" → ");
+          const elapsed = ((performance.now() - sequenceStartedAt) / 1000).toFixed(1);
+          routeEventLog.push(
+            `${elapsed}s · RECOVERY · ${client} → ${server}: ${relay} restored; primary path ${route.path.join(" → ") || "unavailable"}${restoredPath ? ` via ${restoredPath}` : ""}`
+          );
+          routeTransitions[index].restoredPath = route.path.join(" → ");
+          renderFailureEventLog();
+        }, (index + 1) * 2000));
+      });
+
+      routeEventLog.unshift("All four primary relays fail together · all four client/server paths reroute; relays restore one at a time.");
+      renderFailureEventLog();
+    }
+
+    function showRoute(stateName) {
+      if (stateName !== "sequence") {
+        failedLinks.clear();
+        failedNodes.clear();
+        routeEventStates.fill("ready");
+        routeTransitions.fill(null);
+        routeEventLog.splice(0);
+        renderFailureEventLog();
+        if (stateName === "link-failure") failedLinks.add("Client1|RelayA");
+        if (stateName === "node-failure") {
+          failedLinks.add("Client1|RelayA");
+          failedLinks.add("Client1|RelayE");
+        }
       }
       requestAllRoutes();
 
@@ -543,8 +756,11 @@
 
       document.querySelectorAll(".topology .edge").forEach(edge => {
         const key = edge.dataset.edge.split("|").sort().join("|");
+        const endpoints = edge.dataset.edge.split("|");
         edge.setAttribute("class", "edge");
-        if (failedLinks.has(key)) edge.classList.add("failed-edge");
+        if (failedLinks.has(key) || endpoints.some(name => failedNodes.has(name))) {
+          edge.classList.add("failed-edge");
+        }
         else if (pathEdges.has(key)) edge.classList.add("route-edge");
       });
 
@@ -552,9 +768,10 @@
         const name = node.dataset.node;
         const nodeInfo = nodes.find(item => item.name === name);
         node.classList.toggle("on-route", pathNodes.has(name) && nodeInfo.type === "relay");
+        node.classList.toggle("failed", failedNodes.has(name));
         const stateLabel = node.querySelector(".node-state");
         if (stateLabel) {
-          stateLabel.textContent = "";
+          stateLabel.textContent = failedNodes.has(name) ? "FAILED" : "";
         }
       });
 
@@ -563,6 +780,8 @@
         `pill ${activeCount === 4 ? (stateName === "normal" ? "info" : "") : "warning"}`;
       document.getElementById("status-pill").textContent = stateName === "normal"
         ? "All primary routes active"
+        : stateName === "sequence"
+          ? "All four clients rerouted · individual recoveries"
         : stateName === "link-failure"
           ? "Client1 switched to its backup relay"
           : stateName === "recovery"
@@ -575,12 +794,30 @@
           const isBackup = route.path.some(node => /^Relay[EFGH]$/.test(node));
           card.className = `route-card ${route.path.length ? (isBackup ? "rerouted" : "") : "unavailable"}`;
           const title = document.createElement("strong");
-          title.textContent = `${client} (${priorityLabels[client].split(" · ")[0]}) → Server${client.slice(6)}`;
+          const pairIndex = Number(client.slice(6)) - 1;
+          const server = `Server${client.slice(6)}`;
+          const primary = `Relay${String.fromCharCode(65 + pairIndex)}`;
+          title.textContent = `${client} (${priorityLabels[client].split(" · ")[0]}) → ${server}`;
           const path = document.createElement("span");
           path.textContent = route.path.length
             ? `${route.path.join(" → ")} · cost ${route.cost.toFixed(2)}${isBackup ? " · backup" : " · primary"}`
             : "No available route";
-          card.append(title, path);
+          const eventState = document.createElement("span");
+          if (stateName === "sequence") {
+            if (routeEventStates[pairIndex] === "failed") {
+              const transition = routeTransitions[pairIndex];
+              eventState.textContent = `Failed path: ${transition?.failedPath || "unavailable"} · Rerouted path: ${transition?.reroutedPath || "no available route"}`;
+            } else if (routeEventStates[pairIndex] === "recovered") {
+              const transition = routeTransitions[pairIndex];
+              eventState.textContent = `Recovered · ${primary} restored · failed path: ${transition?.failedPath || "unavailable"} · restored path: ${transition?.restoredPath || route.path.join(" → ")}`;
+            } else {
+              eventState.textContent = `${primary} online · failure event pending`;
+            }
+          } else {
+            eventState.textContent = `Primary relay: ${primary}`;
+          }
+          card.classList.toggle("recovered", stateName === "sequence" && routeEventStates[pairIndex] === "recovered");
+          card.append(title, path, eventState);
           return card;
         })
       );
@@ -611,7 +848,14 @@
     }
 
     document.querySelectorAll("[data-state]").forEach(button => {
-      button.addEventListener("click", () => showRoute(button.dataset.state));
+      button.addEventListener("click", () => {
+        if (button.dataset.state === "sequence") {
+          schedulePairFailureSequence();
+          return;
+        }
+        clearSequence();
+        showRoute(button.dataset.state);
+      });
     });
     renderTopology();
     showRoute("normal");

@@ -11,14 +11,12 @@
 
 ## Required environment and setup
 
-- macOS with Docker Desktop installed and running.
-- The existing Docker container `ns3-lab`, with NS-3.45 at
-  `/opt/ns-3.45` and its `./ns3` build driver for running simulations. The
-  original C++ sources are included in this project under
-  `original_simulations/`; the repeat runner uses the separate sources in
-  `repeat_simulations/`.
 - Python 3.9 or later and the packages in `requirements.txt` (pandas 2.3.3,
   matplotlib 3.9.4).
+- Either an existing Docker container `ns3-lab` with NS-3.45 at
+  `/opt/ns-3.45`, or a local NS-3.45 source checkout with its `./ns3` build
+  driver. The original C++ sources are included under `original_simulations/`;
+  the A* runner uses the separate source under `repeat_simulations/`.
 
 From the project directory, create/use the virtual environment and install the
 analysis packages:
@@ -36,9 +34,10 @@ docker start ns3-lab
 docker exec ns3-lab sh -lc 'cd /opt/ns-3.45 && ./ns3 --help'
 ```
 
-The repeat runner copies only its three new sources into the container; it does
-not overwrite the original C++ sources. Refer to the repeat-run section below
-for the commands that build and execute the repeat variants.
+The default repeat runner uses Docker and copies its A* source into the
+container's `scratch/` directory. It does not overwrite a different source
+already there. If NS-3 is installed locally, use `--backend native` instead;
+no Docker installation is needed.
 
 ## Included original sources and external topology
 
@@ -186,21 +185,28 @@ output files; choose `--output` and `--graphs` to select another unused path.
 `repeat_simulations/astar-multiclient.cc` is a separate NS-3.45 Wi-Fi scenario;
 it leaves the historical two-client simulations and their results unchanged.
 It models four clients, four corresponding servers, and eight relays (one
-primary and one backup relay per client). The range-limited ad-hoc Wi-Fi graph
+primary and one backup relay per client). The relays form a connected ladder:
+the primary relays and backup relays each have a backbone link to their
+neighbors, and each client/server pair's relays are linked by a rung. Link
+weights are shown on the interactive dashboard; A* sums weighted link costs
+and accounts for traffic priority. The range-limited ad-hoc Wi-Fi graph
 provides alternate multi-hop paths. Each client sends to its server over UDP.
 High, medium, and low traffic classes use different offered data rates, and
 their priority levels are included in the A* congestion-cost calculation.
 
 The C++ A* router selects a route using geometric link distance plus a
-congestion penalty divided by traffic priority. At 5 seconds the failure
-scenario marks Client1's primary link unavailable in the A* routing graph (or
-can take its primary relay's Wi-Fi interface down with `--failure-type node`).
-Routes are recalculated and installed as IPv4 host routes. The primary path is
-restored at 7 seconds. For link failures, this is a routing/control-plane link
-failure: the A* graph excludes the edge and packets are sent along the backup;
-the Wi-Fi channel itself remains available. Node failures take the relay
-interface down in NS-3. The simulation logs route changes and defines recovery
-as the first subsequent packet received by the affected server.
+congestion penalty divided by traffic priority. In the failure scenario, all
+four corresponding primary relays (RelayA through RelayD) fail at the same time
+(4 seconds), and all four routes are recalculated together. The relays are then
+restored separately at 6, 8, 10, and 12 seconds. Routes are recalculated and
+installed as IPv4 host routes after every event. Each log record names the
+client, server, and failed/recovered relay. Recovery time is the first
+subsequent packet received by that pair's server; the per-route CSV also records
+the absolute relay-restoration time. The default `--failure-type node` takes
+the relay Wi-Fi interface down in NS-3. Optional
+`--failure-type link` removes the corresponding client-to-primary-relay edge
+from the A* graph only; that is a control-plane failure, not a physical Wi-Fi
+link outage.
 
 Run paired experiments from this directory when the documented `ns3-lab`
 Docker container is available:
@@ -211,8 +217,39 @@ python performance_analysis.py \
   --repeat-xml-dir results/raw/astar_repeats \
   --repeat-log-dir results/processed/astar_repeats/run_logs \
   --repeat-output-dir results/processed/astar_repeats/analysis \
-  --repeat-graphs results/graphs/astar_repeats
+  --repeat-graphs results/graphs/astar_repeats \
+  --measurement-duration 16
 ```
+
+For a friend's machine that already has the NS-3.45 source tree installed, run
+the same experiments natively without Docker. Point `--ns3-dir` to the root
+directory containing the `ns3` build driver and `scratch/` directory:
+
+```bash
+python3 run_astar_repeats.py --backend native \
+  --ns3-dir /path/to/ns-3.45 --runs 101 102 --seed 1
+python3 run_astar_repeats.py --backend native \
+  --ns3-dir /path/to/ns-3.45 --runs 103 104 --seed 1
+python3 performance_analysis.py \
+  --repeat-xml-dir results/raw/astar_repeats \
+  --repeat-log-dir results/processed/astar_repeats/run_logs \
+  --repeat-output-dir results/processed/astar_repeats/analysis \
+  --repeat-graphs results/graphs/astar_repeats \
+  --measurement-duration 16
+```
+
+The local NS-3 tree must be version 3.45 and built with the Wi-Fi, Internet,
+Applications, and FlowMonitor modules. The runner builds
+`scratch/astar-multiclient` in that tree, copies the generated XML back into
+this project, and refuses to overwrite an existing different scratch source or
+previous run outputs. Node failure is the default, so all four matching primary
+relays are taken offline together and recovered in turn. Analysis writes the
+unique per-pair failure, reroute, packet-recovery, and relay-restoration records
+to `per_route_recovery.csv`. Set measurement duration to 16
+seconds because this scenario sends traffic from 1 to 17 seconds. The recovery
+CSV includes the failed path, A* replacement path, failure time, absolute relay
+restoration time, and client/server/relay-specific packet recovery time. Python
+analysis dependencies are listed in `requirements.txt`.
 
 Choose unused run numbers: the runner refuses to overwrite output files.
 The analysis produces paired aggregate metrics, route-change/recovery
