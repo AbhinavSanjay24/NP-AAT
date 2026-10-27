@@ -3,8 +3,11 @@
 ## What this package does
 - Adds a Python analysis script that reads NS-3 FlowMonitor XML output.
 - Calculates packet loss, PDR, throughput, and average end-to-end delay.
+- Includes a separate multi-client A* Wi-Fi simulation with priority traffic,
+  failure recovery events, and per-priority analysis.
 - Saves a metrics CSV and PNG charts under `results/processed/` and `results/graphs/`.
-- Leaves route-change count and failure recovery time blank until the simulation records real events.
+- Legacy FlowMonitor-only analysis leaves route-change count and recovery time
+  blank; the A* runner records those events in its simulation logs.
 
 ## Required environment and setup
 
@@ -177,6 +180,47 @@ output files; choose `--output` and `--graphs` to select another unused path.
 - Average delay is total FlowMonitor `delaySum` divided by received packets.
 - FlowMonitor alone does not report reliable route-change counts or a recovery
   time. Those values require explicit event logging and a defined recovery rule.
+
+## Multi-client A* simulation
+
+`repeat_simulations/astar-multiclient.cc` is a separate NS-3.45 Wi-Fi scenario;
+it leaves the historical two-client simulations and their results unchanged.
+It models four clients, four corresponding servers, and eight relays (one
+primary and one backup relay per client). The range-limited ad-hoc Wi-Fi graph
+provides alternate multi-hop paths. Each client sends to its server over UDP.
+High, medium, and low traffic classes use different offered data rates, and
+their priority levels are included in the A* congestion-cost calculation.
+
+The C++ A* router selects a route using geometric link distance plus a
+congestion penalty divided by traffic priority. At 5 seconds the failure
+scenario marks Client1's primary link unavailable in the A* routing graph (or
+can take its primary relay's Wi-Fi interface down with `--failure-type node`).
+Routes are recalculated and installed as IPv4 host routes. The primary path is
+restored at 7 seconds. For link failures, this is a routing/control-plane link
+failure: the A* graph excludes the edge and packets are sent along the backup;
+the Wi-Fi channel itself remains available. Node failures take the relay
+interface down in NS-3. The simulation logs route changes and defines recovery
+as the first subsequent packet received by the affected server.
+
+Run paired experiments from this directory when the documented `ns3-lab`
+Docker container is available:
+
+```bash
+python run_astar_repeats.py --runs 101 102 --seed 1
+python performance_analysis.py \
+  --repeat-xml-dir results/raw/astar_repeats \
+  --repeat-log-dir results/processed/astar_repeats/run_logs \
+  --repeat-output-dir results/processed/astar_repeats/analysis \
+  --repeat-graphs results/graphs/astar_repeats
+```
+
+Choose unused run numbers: the runner refuses to overwrite output files.
+The analysis produces paired aggregate metrics, route-change/recovery
+statistics, per-flow results, summaries grouped by priority, and additional
+per-priority charts. The old
+`run_repeats.py` workflow below remains available for reproducing the earlier
+two-client Wi-Fi interruption experiment; its metrics are not A* rerouting
+measurements.
 
 ## Repeatable paired experiments
 

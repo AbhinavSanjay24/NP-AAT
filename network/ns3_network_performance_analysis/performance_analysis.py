@@ -123,15 +123,98 @@ REPEAT_METRICS = {
         "Average End-to-End Delay", "Delay (ms)", "end_to_end_delay_mean_std.png"
     ),
 }
+PRIORITY_BY_PORT = {5000: 3, 5001: 2, 5002: 1, 5003: 3}
 
 
-def analyze_repeats(xml_dir, measurement_duration, output_dir, graph_dir):
+def read_simulation_events(log_path, *, require_recovery=False):
+    """Read routing events recorded by the multi-client A* simulation."""
+    if not log_path.is_file():
+        raise FileNotFoundError(f"Simulation event log does not exist: {log_path}")
+
+    text = log_path.read_text(encoding="utf-8")
+    route_counts = re.findall(r"^ROUTE_CHANGE_COUNT total=(\d+)$", text, re.MULTILINE)
+    if not route_counts:
+        raise ValueError(f"{log_path} does not contain a final route-change count.")
+
+    recovery_matches = re.findall(
+        r"^FAILURE_RECOVERY_TIME seconds=([^\s]+)$", text, re.MULTILINE
+    )
+    if require_recovery and not recovery_matches:
+        raise ValueError(f"{log_path} does not contain a recovery-time result.")
+    recovery_time = None
+    if recovery_matches and recovery_matches[-1] != "unrecovered":
+        recovery_time = float(recovery_matches[-1])
+
+    return int(route_counts[-1]), recovery_time
+
+
+def read_priority_flow_metrics(xml_path, scenario, run_number, seed,
+                                measurement_duration):
+    """Calculate per-flow measurements and associate the configured priority."""
+    root = ET.parse(xml_path).getroot()
+    flow_stats = root.find("FlowStats")
+    classifier = root.find("Ipv4FlowClassifier")
+    if flow_stats is None or classifier is None:
+        raise ValueError(f"{xml_path} is missing FlowStats or Ipv4FlowClassifier.")
+
+    flow_details = {
+        flow.get("flowId"): flow
+        for flow in classifier.findall("Flow")
+    }
+    rows = []
+    for flow in flow_stats.findall("Flow"):
+        detail = flow_details.get(flow.get("flowId"))
+        if detail is None:
+            raise ValueError(
+                f"{xml_path} has no IPv4 classifier record for flow "
+                f"{flow.get('flowId')}."
+            )
+        destination_port = int(detail.get("destinationPort", "0"))
+        if destination_port not in PRIORITY_BY_PORT:
+            raise ValueError(
+                f"Unexpected destination port {destination_port} in {xml_path}."
+            )
+
+        tx_packets = int(flow.get("txPackets", "0"))
+        rx_packets = int(flow.get("rxPackets", "0"))
+        tx_bytes = int(flow.get("txBytes", "0"))
+        rx_bytes = int(flow.get("rxBytes", "0"))
+        loss = max(tx_packets - rx_packets, 0)
+        delay_seconds = seconds(flow.get("delaySum", "0s"))
+        rows.append({
+            "scenario": scenario,
+            "run_number": run_number,
+            "seed": seed,
+            "flow_id": int(flow.get("flowId", "0")),
+            "source_address": detail.get("sourceAddress"),
+            "destination_address": detail.get("destinationAddress"),
+            "destination_port": destination_port,
+            "priority": PRIORITY_BY_PORT[destination_port],
+            "packets_sent": tx_packets,
+            "packets_received": rx_packets,
+            "packets_lost": loss,
+            "packet_loss_percent": loss / tx_packets * 100 if tx_packets else 0.0,
+            "pdr_percent": rx_packets / tx_packets * 100 if tx_packets else 0.0,
+            "throughput_mbps": (
+                rx_bytes * 8 / measurement_duration / 1_000_000
+                if measurement_duration > 0 else 0.0
+            ),
+            "average_end_to_end_delay_ms": (
+                delay_seconds / rx_packets * 1000 if rx_packets else 0.0
+            ),
+        })
+    return rows
+
+
+def analyze_repeats(xml_dir, measurement_duration, output_dir, graph_dir,
+                    log_dir=None):
     """Summarize paired repeat-run XMLs without replacing existing artifacts."""
     xml_dir = Path(xml_dir)
     if not xml_dir.is_dir():
         raise FileNotFoundError(f"Repeat XML directory does not exist: {xml_dir}")
 
     rows = []
+    flow_rows = []
     run_keys = {"baseline": set(), "failure": set()}
     for xml_path in sorted(xml_dir.glob("*.xml")):
         match = REPEAT_NAME.fullmatch(xml_path.name)
@@ -142,8 +225,19 @@ def analyze_repeats(xml_dir, measurement_duration, output_dir, graph_dir):
         run_keys[scenario_key].add((seed, run_number))
         scenario = "Normal" if scenario_key == "baseline" else "Failure"
         row = read_flowmon(str(xml_path), scenario, measurement_duration)
-        row.pop("route_changes", None)
-        row.pop("failure_recovery_time_seconds", None)
+        if log_dir is not None:
+            log_path = Path(log_dir) / f"{scenario_key}-run-{run_number:04d}-seed-{seed}.txt"
+            row["route_changes"], row["failure_recovery_time_seconds"] = (
+                read_simulation_events(
+                    log_path, require_recovery=scenario_key == "failure"
+                )
+            )
+            flow_rows.extend(read_priority_flow_metrics(
+                xml_path, scenario, run_number, seed, measurement_duration
+            ))
+        else:
+            row.pop("route_changes", None)
+            row.pop("failure_recovery_time_seconds", None)
         row.update({"run_number": run_number, "seed": seed,
                     "xml_file": xml_path.name})
         rows.append(row)
@@ -166,14 +260,31 @@ def analyze_repeats(xml_dir, measurement_duration, output_dir, graph_dir):
             summary[f"{metric}_mean"] = scenario_rows[metric].mean()
             # pandas std() uses sample standard deviation (ddof=1).
             summary[f"{metric}_sample_std"] = scenario_rows[metric].std(ddof=1)
+        if "route_changes" in scenario_rows:
+            summary["route_changes_mean"] = scenario_rows["route_changes"].mean()
+            summary["route_changes_sample_std"] = scenario_rows["route_changes"].std(ddof=1)
+            summary["failure_recovery_time_seconds_mean"] = (
+                scenario_rows["failure_recovery_time_seconds"].mean()
+            )
+            summary["failure_recovery_time_seconds_sample_std"] = (
+                scenario_rows["failure_recovery_time_seconds"].std(ddof=1)
+            )
         summary_rows.append(summary)
     summary_df = pd.DataFrame(summary_rows)
 
     per_run_path = Path(output_dir) / "per_run_metrics.csv"
     summary_path = Path(output_dir) / "repeat_summary.csv"
+    flow_path = Path(output_dir) / "per_flow_metrics.csv"
+    priority_path = Path(output_dir) / "priority_summary.csv"
     graph_dir = Path(graph_dir)
     graph_paths = [graph_dir / spec[2] for spec in REPEAT_METRICS.values()]
-    collisions = [path for path in [per_run_path, summary_path, *graph_paths]
+    output_paths = [per_run_path, summary_path, *graph_paths]
+    if log_dir is not None:
+        output_paths.extend([flow_path, priority_path])
+        output_paths.extend(
+            graph_dir / f"priority_{spec[2]}" for spec in REPEAT_METRICS.values()
+        )
+    collisions = [path for path in output_paths
                   if path.exists()]
     if collisions:
         raise FileExistsError(
@@ -185,6 +296,53 @@ def analyze_repeats(xml_dir, measurement_duration, output_dir, graph_dir):
     graph_dir.mkdir(parents=True, exist_ok=True)
     per_run.to_csv(per_run_path, index=False)
     summary_df.to_csv(summary_path, index=False)
+    if log_dir is not None:
+        flow_df = pd.DataFrame(flow_rows)
+        flow_df.to_csv(flow_path, index=False)
+        priority_metrics = list(REPEAT_METRICS)
+        priority_summary = (
+            flow_df.groupby(["scenario", "priority"])[priority_metrics]
+            .agg(["mean", "std"])
+            .reset_index()
+        )
+        priority_summary.columns = [
+            "_".join(str(part) for part in column if part)
+            if isinstance(column, tuple) else column
+            for column in priority_summary.columns
+        ]
+        priority_summary.to_csv(priority_path, index=False)
+        priority_order = sorted(flow_df["priority"].unique())
+        x_positions = list(range(len(priority_order)))
+        bar_width = 0.36
+        for metric, (title, ylabel, filename) in REPEAT_METRICS.items():
+            plt.figure(figsize=(7, 4.5))
+            for index, scenario in enumerate(("Normal", "Failure")):
+                scenario_data = flow_df[flow_df["scenario"] == scenario]
+                grouped = scenario_data.groupby("priority")[metric].agg(["mean", "std"])
+                means = [
+                    grouped.loc[priority, "mean"] if priority in grouped.index else 0
+                    for priority in priority_order
+                ]
+                deviations = [
+                    grouped.loc[priority, "std"]
+                    if priority in grouped.index and pd.notna(grouped.loc[priority, "std"])
+                    else 0
+                    for priority in priority_order
+                ]
+                offsets = [
+                    position + (index - 0.5) * bar_width
+                    for position in x_positions
+                ]
+                plt.bar(offsets, means, width=bar_width, yerr=deviations,
+                        capsize=4, label=scenario)
+            plt.title(f"{title} by traffic priority")
+            plt.ylabel(ylabel)
+            plt.xlabel("Traffic priority (1 = low, 3 = high)")
+            plt.xticks(x_positions, [f"P{value}" for value in priority_order])
+            plt.legend()
+            plt.tight_layout()
+            plt.savefig(graph_dir / f"priority_{filename}", dpi=160)
+            plt.close()
 
     scenario_order = ["Normal", "Failure"]
     for metric, (title, ylabel, filename) in REPEAT_METRICS.items():
@@ -222,7 +380,11 @@ def analyze_repeats(xml_dir, measurement_duration, output_dir, graph_dir):
     print(summary_df.to_string(index=False))
     print(f"\nSaved per-run CSV: {per_run_path}")
     print(f"Saved summary CSV: {summary_path}")
-    print(f"Saved four unit-specific mean ± SD graphs in: {graph_dir}")
+    if log_dir is not None:
+        print(f"Saved per-flow priority CSV: {flow_path}")
+        print(f"Saved priority summary CSV: {priority_path}")
+    graph_count = 8 if log_dir is not None else 4
+    print(f"Saved {graph_count} unit-specific mean ± SD graphs in: {graph_dir}")
 
 
 def main():
@@ -239,6 +401,10 @@ def main():
     parser.add_argument(
         "--repeat-graphs", default="results/graphs/repeats",
         help="Output directory for the four repeat mean ± sample-SD graphs",
+    )
+    parser.add_argument(
+        "--repeat-log-dir",
+        help="Simulation log directory for route changes and recovery-time analysis",
     )
     parser.add_argument(
         "--measurement-duration", type=float, default=8.0,
@@ -262,6 +428,7 @@ def main():
             args.measurement_duration,
             args.repeat_output_dir,
             args.repeat_graphs,
+            args.repeat_log_dir,
         )
         return
 

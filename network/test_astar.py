@@ -32,6 +32,61 @@ def build_test_network():
     return router
 
 
+def build_multi_client_network():
+    positions = {}
+    for index in range(4):
+        y = index * 3
+        positions[f"Client{index + 1}"] = (0, y)
+        positions[f"Relay{chr(ord('A') + index)}"] = (2, y)
+        positions[f"Relay{chr(ord('E') + index)}"] = (4, y)
+        positions[f"Server{index + 1}"] = (6, y)
+
+    router = AStarRouter(positions)
+    for index in range(4):
+        client = f"Client{index + 1}"
+        server = f"Server{index + 1}"
+        primary = f"Relay{chr(ord('A') + index)}"
+        backup = f"Relay{chr(ord('E') + index)}"
+        router.add_link(client, primary, cost=1)
+        router.add_link(primary, server, cost=1)
+        router.add_link(client, backup, cost=2)
+        router.add_link(backup, server, cost=2)
+
+    return router
+
+
+def test_four_client_server_pairs_reroute_independently():
+    router = build_multi_client_network()
+    initial_routes = {
+        f"Client{index}": router.request_route(
+            f"Client{index}", f"Server{index}"
+        )
+        for index in range(1, 5)
+    }
+
+    for index in range(1, 5):
+        client = f"Client{index}"
+        assert initial_routes[client][0] == [
+            client,
+            f"Relay{chr(ord('A') + index - 1)}",
+            f"Server{index}",
+        ]
+
+    for index in range(2, 5):
+        key = (f"Client{index}", f"Server{index}")
+        assert router.active_routes[key] == initial_routes[key[0]]
+
+    for index in range(1, 5):
+        client = f"Client{index}"
+        server = f"Server{index}"
+        primary = f"Relay{chr(ord('A') + index - 1)}"
+        backup = f"Relay{chr(ord('E') + index - 1)}"
+        assert router.fail_link(client, primary)
+        assert router.active_routes[(client, server)][0] == [client, backup, server]
+        assert router.recover_link(client, primary)
+        assert router.active_routes[(client, server)] == initial_routes[client]
+
+
 def test_reroutes_after_link_failure():
     router = build_test_network()
     initial_path, initial_cost = router.request_route("Client1", "Server1")

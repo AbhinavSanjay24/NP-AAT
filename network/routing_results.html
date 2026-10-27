@@ -120,6 +120,14 @@
     .node.failed circle { fill: #ffeded; stroke: var(--red); stroke-width: 4; }
     .node-label { fill: var(--ink); font-size: 14px; font-weight: 700; text-anchor: middle; }
     .node-state { fill: var(--red); font-size: 11px; font-weight: 700; text-anchor: middle; }
+    .priority-label { fill: #62758a; font-size: 10px; font-weight: 750; text-anchor: middle; }
+    .column-label { fill: #62758a; font-size: 14px; font-weight: 750; letter-spacing: .04em; text-anchor: middle; }
+    .route-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 9px; margin-top: 15px; }
+    .route-card { min-width: 0; padding: 11px 13px; border: 1px solid var(--line); border-radius: 10px; background: #fbfdff; }
+    .route-card strong { display: block; margin-bottom: 3px; font-size: .84rem; }
+    .route-card span { display: block; color: var(--muted); font-size: .8rem; overflow-wrap: anywhere; }
+    .route-card.rerouted { border-color: #e2bd77; background: #fffaf0; }
+    .route-card.unavailable { border-color: #efb6b6; background: #fff4f4; }
     .legend { display: flex; flex-wrap: wrap; gap: 18px; margin-top: 12px; color: var(--muted); font-size: .84rem; }
     .legend span { display: inline-flex; align-items: center; gap: 7px; }
     .swatch { display: inline-block; width: 22px; height: 4px; border-radius: 2px; background: var(--green); }
@@ -181,6 +189,7 @@
       header { padding: 34px 22px; }
       .card { padding: 18px; }
       .how-grid, .metrics-grid, .takeaway { grid-template-columns: 1fr; }
+      .route-list { grid-template-columns: 1fr; }
       .section-heading { align-items: start; flex-direction: column; }
     }
 
@@ -200,7 +209,7 @@
   <header>
     <p class="eyebrow">Network routing demonstration</p>
     <h1>A* finds a route.<br>Rerouting keeps it moving.</h1>
-    <p>Explore how a registered path changes when a link or relay fails, then compare the separate 10-run network experiment.</p>
+    <p>Explore four client/server paths, simulate a relay failure, and compare the earlier 10-run Wi-Fi experiment. The separate NS-3 A* run instructions are linked below.</p>
   </header>
 
   <main>
@@ -208,64 +217,32 @@
       <div class="section-heading">
         <div>
           <h2 id="route-title">1. Route changes, step by step</h2>
-          <p>Choose an event to see the active route recalculate.</p>
+          <p>Four clients connect to four servers through eight relays. Each client has a traffic priority; simulate a failure and watch A* recalculate every active route.</p>
         </div>
         <span class="live-tag">Interactive A* demo</span>
       </div>
 
       <div class="controls" role="group" aria-label="Simulated network event">
         <button type="button" data-state="normal" aria-pressed="true">Normal network</button>
-        <button type="button" data-state="link-failure" aria-pressed="false">Fail primary link</button>
-        <button type="button" data-state="recovery" aria-pressed="false">Recover link</button>
-        <button type="button" data-state="node-failure" aria-pressed="false">Fail both relay paths</button>
+        <button type="button" data-state="link-failure" aria-pressed="false">Fail Client1 primary link</button>
+        <button type="button" data-state="recovery" aria-pressed="false">Recover Client1 link</button>
+        <button type="button" data-state="node-failure" aria-pressed="false">Fail both Client1 paths</button>
       </div>
 
       <div class="route-status" aria-live="polite">
         <span class="pill" id="status-pill">Route active</span>
         <span class="route-text" id="route-text"></span>
-        <span class="pill info" id="cost-pill"></span>
       </div>
 
       <div class="topology-wrap">
-        <svg class="topology" viewBox="0 0 700 330" role="img" aria-labelledby="topology-title topology-desc">
-          <title id="topology-title">Network topology with a primary and backup path</title>
-          <desc id="topology-desc">Client1 connects to Server1 through either RelayA and RelayB, or RelayC and RelayD.</desc>
-          <g aria-hidden="true">
-            <line class="edge" data-edge="Client1|RelayA" x1="95" y1="165" x2="235" y2="95"/>
-            <line class="edge" data-edge="RelayA|RelayB" x1="265" y1="95" x2="420" y2="95"/>
-            <line class="edge" data-edge="RelayB|Server1" x1="450" y1="95" x2="590" y2="165"/>
-            <line class="edge" data-edge="Client1|RelayC" x1="95" y1="165" x2="235" y2="235"/>
-            <line class="edge" data-edge="RelayC|RelayD" x1="265" y1="235" x2="420" y2="235"/>
-            <line class="edge" data-edge="RelayD|Server1" x1="450" y1="235" x2="590" y2="165"/>
-
-            <text class="edge-label" x="158" y="115">1.41</text>
-            <text class="edge-label" x="343" y="80">1.00</text>
-            <text class="edge-label" x="520" y="115">1.41</text>
-            <text class="edge-label" x="158" y="221">1.41</text>
-            <text class="edge-label" x="343" y="260">1.00</text>
-            <text class="edge-label" x="520" y="221">1.41</text>
-
-            <g class="node endpoint" data-node="Client1" transform="translate(75 165)">
-              <circle r="22"/><text class="node-label" y="48">Client1</text>
-            </g>
-            <g class="node" data-node="RelayA" transform="translate(250 95)">
-              <circle r="20"/><text class="node-label" y="-32">RelayA</text><text class="node-state" y="5"></text>
-            </g>
-            <g class="node" data-node="RelayB" transform="translate(435 95)">
-              <circle r="20"/><text class="node-label" y="-32">RelayB</text><text class="node-state" y="5"></text>
-            </g>
-            <g class="node" data-node="RelayC" transform="translate(250 235)">
-              <circle r="20"/><text class="node-label" y="46">RelayC</text><text class="node-state" y="5"></text>
-            </g>
-            <g class="node" data-node="RelayD" transform="translate(435 235)">
-              <circle r="20"/><text class="node-label" y="46">RelayD</text><text class="node-state" y="5"></text>
-            </g>
-            <g class="node endpoint" data-node="Server1" transform="translate(615 165)">
-              <circle r="22"/><text class="node-label" y="48">Server1</text>
-            </g>
-          </g>
+        <svg class="topology" viewBox="0 0 1000 550" role="img" aria-labelledby="topology-title topology-desc">
+          <title id="topology-title">Four clients, four servers, and eight relays</title>
+          <desc id="topology-desc">Four client-server pairs are connected through primary and backup relay nodes. A* recalculates active routes after a failure.</desc>
+          <g id="topology-edges" aria-hidden="true"></g>
+          <g id="topology-nodes" aria-hidden="true"></g>
         </svg>
       </div>
+      <div class="route-list" id="route-list" aria-live="polite"></div>
       <div class="legend" aria-label="Topology legend">
         <span><i class="swatch"></i> Active A* route</span>
         <span><i class="swatch idle"></i> Available link</span>
@@ -331,7 +308,7 @@
         <span><b>—|—</b> ±1 sample standard deviation</span>
       </div>
       <div class="callout">
-        <strong>Important:</strong> These 10-run charts are from the existing NS-3 Wi-Fi sleep/resume experiment. That simulation does not use this A* router or perform alternate-route switching. Treat these metrics as a separate network experiment, not as measured A* rerouting performance.
+        <strong>Important:</strong> These 10-run charts are from the earlier NS-3 Wi-Fi sleep/resume experiment. They do not measure A* rerouting performance. The new four-client NS-3 A* experiment and commands are documented in the <a href="./ns3_network_performance_analysis/README_member4.md">NS-3 analysis guide</a>; its outputs are generated separately when you run it.
       </div>
     </section>
 
@@ -343,45 +320,177 @@
         </div>
       </div>
       <div class="takeaway">
-        <div><strong>Backup route selected</strong><span>When RelayA–RelayB fails, A* switches through RelayC and RelayD.</span></div>
+        <div><strong>Backup route selected</strong><span>When Client1's primary link fails, A* switches through RelayE while the other routes remain active.</span></div>
         <div><strong>Automatic route refresh</strong><span>Fail and recover events recalculate registered routes without another request.</span></div>
-        <div><strong>Not an NS-3 A* result</strong><span>The interactive topology demonstrates the Python router; the charts summarize a distinct NS-3 experiment.</span></div>
+        <div><strong>Keep experiment results separate</strong><span>The comparison charts show the earlier interruption experiment; the NS-3 A* scenario produces its own measurements.</span></div>
       </div>
     </section>
   </main>
   <footer>Interactive A* topology and repeat-analysis summary · Open this file in a browser · Print or save as PDF for a handout</footer>
 
   <script>
-    const routeStates = {
-      normal: {
-        path: ["Client1", "RelayA", "RelayB", "Server1"],
-        cost: "3.83",
-        message: "Primary route active",
-        failedLinks: [],
-        failedNodes: []
-      },
-      "link-failure": {
-        path: ["Client1", "RelayC", "RelayD", "Server1"],
-        cost: "3.83",
-        message: "Primary link failed · backup selected",
-        failedLinks: ["RelayA|RelayB"],
-        failedNodes: []
-      },
-      recovery: {
-        path: ["Client1", "RelayA", "RelayB", "Server1"],
-        cost: "3.83",
-        message: "Link recovered · primary route restored",
-        failedLinks: [],
-        failedNodes: []
-      },
-      "node-failure": {
-        path: [],
-        cost: "No route",
-        message: "Both relay paths unavailable",
-        failedLinks: [],
-        failedNodes: ["RelayA", "RelayB", "RelayC", "RelayD"]
-      }
+    const svgNS = "http://www.w3.org/2000/svg";
+    const nodes = [];
+    const edges = [];
+    const adjacency = new Map();
+    const positions = new Map();
+    const failedLinks = new Set();
+    const failedNodes = new Set();
+    const activeRoutes = new Map();
+    const priorityLabels = {
+      Client1: "HIGH · 2 Mbps",
+      Client2: "MEDIUM · 1 Mbps",
+      Client3: "LOW · 512 kbps",
+      Client4: "HIGH · 2 Mbps"
     };
+
+    function addNode(name, type, x, y) {
+      nodes.push({ name, type, x, y });
+      positions.set(name, { x, y });
+      adjacency.set(name, []);
+    }
+
+    function addEdge(from, to, cost) {
+      const edge = { from, to, cost, key: [from, to].sort().join("|") };
+      edges.push(edge);
+      adjacency.get(from).push({ node: to, cost, key: edge.key });
+      adjacency.get(to).push({ node: from, cost, key: edge.key });
+    }
+
+    const rowY = [90, 210, 330, 450];
+    for (let index = 0; index < 4; index += 1) {
+      const row = index + 1;
+      const primary = `Relay${String.fromCharCode(65 + index)}`;
+      const backup = `Relay${String.fromCharCode(69 + index)}`;
+      addNode(`Client${row}`, "client", 95, rowY[index]);
+      addNode(primary, "relay", 365, rowY[index]);
+      addNode(backup, "relay", 635, rowY[index] + 40);
+      addNode(`Server${row}`, "server", 905, rowY[index]);
+      addEdge(`Client${row}`, primary, 1);
+      addEdge(primary, `Server${row}`, 1);
+      addEdge(`Client${row}`, backup, 2);
+      addEdge(backup, `Server${row}`, 2);
+      addEdge(primary, backup, 0.75);
+    }
+
+    function makeSvgElement(tag, attributes = {}) {
+      const element = document.createElementNS(svgNS, tag);
+      for (const [name, value] of Object.entries(attributes)) element.setAttribute(name, value);
+      return element;
+    }
+
+    function renderTopology() {
+      const edgeLayer = document.getElementById("topology-edges");
+      const nodeLayer = document.getElementById("topology-nodes");
+      [
+        ["Clients", 95],
+        ["Primary relays", 365],
+        ["Backup relays", 635],
+        ["Servers", 905]
+      ].forEach(([label, x]) => {
+        const heading = makeSvgElement("text", { x, y: 35, class: "column-label" });
+        heading.textContent = label;
+        nodeLayer.appendChild(heading);
+      });
+
+      edges.forEach(edge => {
+        const from = positions.get(edge.from);
+        const to = positions.get(edge.to);
+        edgeLayer.appendChild(makeSvgElement("line", {
+          x1: from.x, y1: from.y, x2: to.x, y2: to.y,
+          class: "edge", "data-edge": edge.key
+        }));
+      });
+
+      nodes.forEach(node => {
+        const endpoint = node.type === "client" || node.type === "server";
+        const group = makeSvgElement("g", {
+          class: `node ${endpoint ? "endpoint" : ""}`,
+          "data-node": node.name,
+          transform: `translate(${node.x} ${node.y})`
+        });
+        group.appendChild(makeSvgElement("circle", { r: endpoint ? 25 : 22 }));
+        const label = makeSvgElement("text", {
+          class: "node-label",
+          y: node.type === "relay" ? -34 : 43
+        });
+        label.textContent = node.name;
+        group.appendChild(label);
+        if (node.type === "client") {
+          const priority = makeSvgElement("text", { class: "priority-label", y: 59 });
+          priority.textContent = priorityLabels[node.name];
+          group.appendChild(priority);
+        }
+        if (node.type === "relay") {
+          group.appendChild(makeSvgElement("text", { class: "node-state", y: 5 }));
+        }
+        nodeLayer.appendChild(group);
+      });
+    }
+
+    function findPath(start, goal) {
+      if (failedNodes.has(start) || failedNodes.has(goal)) return { path: [], cost: Infinity };
+      const heuristicScale = edges.reduce((scale, edge) => {
+        if (failedLinks.has(edge.key) || failedNodes.has(edge.from) || failedNodes.has(edge.to)) {
+          return scale;
+        }
+        const from = positions.get(edge.from);
+        const to = positions.get(edge.to);
+        const distance = Math.hypot(to.x - from.x, to.y - from.y);
+        return distance > 0 ? Math.min(scale, edge.cost / distance) : scale;
+      }, Infinity);
+      const estimateScale = Number.isFinite(heuristicScale) ? heuristicScale : 0;
+      const goalPosition = positions.get(goal);
+      const distanceToGoal = node => {
+        const position = positions.get(node);
+        return Math.hypot(position.x - goalPosition.x, position.y - goalPosition.y);
+      };
+      let sequence = 0;
+      const frontier = [{
+        node: start,
+        cost: 0,
+        priority: estimateScale * distanceToGoal(start),
+        sequence: sequence++
+      }];
+      const bestCost = new Map([[start, 0]]);
+      const parent = new Map();
+      const closed = new Set();
+
+      while (frontier.length) {
+        frontier.sort((a, b) => a.priority - b.priority || a.sequence - b.sequence);
+        const current = frontier.shift();
+        if (closed.has(current.node)) continue;
+        if (current.node === goal) {
+          const path = [goal];
+          while (path[path.length - 1] !== start) path.push(parent.get(path[path.length - 1]));
+          return { path: path.reverse(), cost: current.cost };
+        }
+        closed.add(current.node);
+
+        for (const edge of adjacency.get(current.node)) {
+          if (failedLinks.has(edge.key) || failedNodes.has(edge.node) || closed.has(edge.node)) continue;
+          const candidate = current.cost + edge.cost;
+          if (candidate < (bestCost.get(edge.node) ?? Infinity)) {
+            bestCost.set(edge.node, candidate);
+            parent.set(edge.node, current.node);
+            frontier.push({
+              node: edge.node,
+              cost: candidate,
+              priority: candidate + estimateScale * distanceToGoal(edge.node),
+              sequence: sequence++
+            });
+          }
+        }
+      }
+      return { path: [], cost: Infinity };
+    }
+
+    function requestAllRoutes() {
+      activeRoutes.clear();
+      for (let index = 1; index <= 4; index += 1) {
+        activeRoutes.set(`Client${index}`, findPath(`Client${index}`, `Server${index}`));
+      }
+    }
 
     const measurements = {
       throughput: {
@@ -411,37 +520,71 @@
     }
 
     function showRoute(stateName) {
-      const state = routeStates[stateName];
-      const pathNodes = new Set(state.path);
-      const pathEdges = new Set(
-        state.path.slice(1).map((node, index) => [state.path[index], node].sort().join("|"))
-      );
-      const failedEdges = new Set(state.failedLinks.map(edge => edge.split("|").sort().join("|")));
+      failedLinks.clear();
+      failedNodes.clear();
+      if (stateName === "link-failure") failedLinks.add("Client1|RelayA");
+      if (stateName === "node-failure") {
+        failedLinks.add("Client1|RelayA");
+        failedLinks.add("Client1|RelayE");
+      }
+      requestAllRoutes();
+
+      const pathNodes = new Set();
+      const pathEdges = new Set();
+      let activeCount = 0;
+      for (const route of activeRoutes.values()) {
+        if (!route.path.length) continue;
+        activeCount += 1;
+        route.path.forEach(node => pathNodes.add(node));
+        route.path.slice(1).forEach((node, index) => {
+          pathEdges.add([route.path[index], node].sort().join("|"));
+        });
+      }
 
       document.querySelectorAll(".topology .edge").forEach(edge => {
         const key = edge.dataset.edge.split("|").sort().join("|");
         edge.setAttribute("class", "edge");
-        if (failedEdges.has(key)) edge.classList.add("failed-edge");
+        if (failedLinks.has(key)) edge.classList.add("failed-edge");
         else if (pathEdges.has(key)) edge.classList.add("route-edge");
       });
 
       document.querySelectorAll(".topology .node").forEach(node => {
         const name = node.dataset.node;
-        node.classList.toggle("on-route", pathNodes.has(name) && name !== "Client1" && name !== "Server1");
-        node.classList.toggle("failed", state.failedNodes.includes(name));
+        const nodeInfo = nodes.find(item => item.name === name);
+        node.classList.toggle("on-route", pathNodes.has(name) && nodeInfo.type === "relay");
         const stateLabel = node.querySelector(".node-state");
         if (stateLabel) {
-          stateLabel.textContent = state.failedNodes.includes(name) ? "FAILED" : "";
+          stateLabel.textContent = "";
         }
       });
 
-      document.getElementById("route-text").textContent =
-        state.path.length ? state.path.join("  →  ") : "No available path from Client1 to Server1";
-      document.getElementById("cost-pill").textContent =
-        state.path.length ? `Path cost ${state.cost}` : state.cost;
-      document.getElementById("status-pill").textContent = state.message;
+      document.getElementById("route-text").textContent = `${activeCount} of 4 client/server routes active`;
       document.getElementById("status-pill").className =
-        `pill ${state.path.length ? (stateName === "normal" ? "info" : "") : "warning"}`;
+        `pill ${activeCount === 4 ? (stateName === "normal" ? "info" : "") : "warning"}`;
+      document.getElementById("status-pill").textContent = stateName === "normal"
+        ? "All primary routes active"
+        : stateName === "link-failure"
+          ? "Client1 switched to its backup relay"
+          : stateName === "recovery"
+            ? "Primary link restored · routes recalculated"
+            : "Client1 has no available relay path";
+
+      document.getElementById("route-list").replaceChildren(
+        ...[...activeRoutes].map(([client, route]) => {
+          const card = document.createElement("div");
+          const isBackup = route.path.some(node => /^Relay[EFGH]$/.test(node));
+          card.className = `route-card ${route.path.length ? (isBackup ? "rerouted" : "") : "unavailable"}`;
+          const title = document.createElement("strong");
+          title.textContent = `${client} (${priorityLabels[client].split(" · ")[0]}) → Server${client.slice(6)}`;
+          const path = document.createElement("span");
+          path.textContent = route.path.length
+            ? `${route.path.join(" → ")} · cost ${route.cost.toFixed(2)}${isBackup ? " · backup" : " · primary"}`
+            : "No available route";
+          card.append(title, path);
+          return card;
+        })
+      );
+
       document.querySelectorAll("[data-state]").forEach(button => {
         button.setAttribute("aria-pressed", String(button.dataset.state === stateName));
       });
@@ -470,6 +613,7 @@
     document.querySelectorAll("[data-state]").forEach(button => {
       button.addEventListener("click", () => showRoute(button.dataset.state));
     });
+    renderTopology();
     showRoute("normal");
     renderMetrics();
   </script>
